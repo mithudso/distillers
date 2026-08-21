@@ -1,0 +1,11 @@
+.remember/
+.claude/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Distillation outputs — regenerable; don't commit even if a mirror lands in-repo
+*.pages/
+.*_distill_index.json
+*_master.md
+*_live_preview.md
