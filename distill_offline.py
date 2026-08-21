@@ -435,7 +435,15 @@ def _looks_like_html(text: str, path: str | None = None) -> bool:
     head = text[:4096].lower()
     if "<!doctype html" in head or "<html" in head:
         return True
-    return len(_HTML_TAG_RE.findall(head)) >= 8
+    # Structural evidence: several tag instances, more than one tag TYPE, and
+    # at least one closing tag. Catches small real fragments like
+    # <div><p>x</p></div> while prose that merely mentions <body> or <div>
+    # (1-2 bare mentions, no closers) stays prose.
+    tags = _HTML_TAG_RE.findall(head)
+    if len(tags) < 4:
+        return False
+    types = {re.sub(r"[^a-z0-9]", "", t.split()[0]) for t in tags}
+    return len(types) >= 2 and any(t.startswith("</") for t in tags)
 
 
 def _html_to_text(body: str) -> str:
@@ -766,7 +774,7 @@ def _ollama_embed(texts: list[str], model: str) -> list[list[float]]:
             env["OLLAMA_HOST"] = OLLAMA_URL
             try:
                 subprocess.run(["ollama", "pull", model], env=env, check=True)
-            except (subprocess.SubprocessError, FileNotFoundError) as pull_err:
+            except (subprocess.SubprocessError, OSError) as pull_err:
                 # Typo'd model, registry unreachable, no ollama CLI, disk full —
                 # keep the documented clean-error/lexical-fallback contract.
                 raise OllamaUnavailable(f"ollama pull '{model}' failed: {pull_err}") from pull_err
