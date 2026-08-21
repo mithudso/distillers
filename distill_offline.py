@@ -518,8 +518,8 @@ def cmd_extract(args) -> int:
     else:
         text = _read_text(args.in_file)
         path = args.in_file
-    if _looks_like_html(text, path):
-        text = _html_to_text(text)  # distill only page text, never markup
+    # Mirror check FIRST: HTML-sniffing a mirror whose pages quote HTML would
+    # strip the banners and silently destroy per-page provenance.
     pages = parse_mirror(text)
     if pages:
         # web-text-mirror docset: anchor every unit to its originating page URL
@@ -528,6 +528,8 @@ def cmd_extract(args) -> int:
             page_units, nid = _extract_units_from_text(pg["text"], anchor_prefix=pg["url"], start_id=nid)
             units.extend(page_units)
     else:
+        if _looks_like_html(text, path):
+            text = _html_to_text(text)  # distill only page text, never markup
         units, _ = _extract_units_from_text(text)
     result = {
         "_warning": "HEURISTIC DEGRADED EXTRACT — not a real distillation. "
@@ -557,13 +559,14 @@ def cmd_extract(args) -> int:
 # --------------------------------------------------------------------------- #
 
 _MIRROR_BANNER_RE = re.compile(r"^={10,}\s*$")
-_MIRROR_URL_RE = re.compile(r"^URL:\s*(\S+)\s*$")
+_MIRROR_URL_RE = re.compile(r"^URL:\s*(https?://\S+)\s*$")
+_MIRROR_PAGE_FILE_RE = re.compile(r"^\d+_")  # files written by split_mirror_to_dir
 
 
 def parse_mirror(text: str) -> list[dict] | None:
     """Split a web-text-mirror file into pages. Returns a list of
     {url, start_line, text} dicts, or None when the text is not a mirror
-    (fewer than 2 URL banners found)."""
+    (no URL banners found). Single-page mirrors are valid."""
     lines = text.splitlines()
     page_starts = []  # (index_of_banner_line, url)
     for i in range(len(lines) - 2):
@@ -572,7 +575,7 @@ def parse_mirror(text: str) -> list[dict] | None:
             m = _MIRROR_URL_RE.match(lines[i + 1])
             if m:
                 page_starts.append((i, m.group(1)))
-    if len(page_starts) < 2:
+    if not page_starts:
         return None
     pages = []
     for n, (i, url) in enumerate(page_starts):
@@ -617,6 +620,11 @@ def split_mirror_to_dir(text: str, out_dir: Path) -> int:
     if not pages:
         raise ValueError("input is not a web-text-mirror docset (no URL banners found)")
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Clear stale page files from a previous split: if the mirror shrank or
+    # crawl order changed, leftovers would contaminate a later bulk run.
+    for old in out_dir.glob("*.md"):
+        if _MIRROR_PAGE_FILE_RE.match(old.name):
+            old.unlink()
     for n, pg in enumerate(pages, start=1):
         fname = f"{n:03d}_{_page_slug(pg['url'])}.md"
         (out_dir / fname).write_text(f"URL: {pg['url']}\n\n{pg['text']}\n")
@@ -954,7 +962,10 @@ def cmd_bulk(args) -> int:
                   f"split {n} pages into {pages_dir}", flush=True)
             target_dir = pages_dir
             base_name = target_path.stem
-            files = sorted(p for p in pages_dir.glob("*.md"))
+            # Only the numbered page files — never bulk's own master/preview
+            # outputs from a previous run (they land in this same dir).
+            files = sorted(p for p in pages_dir.glob("*.md")
+                           if _MIRROR_PAGE_FILE_RE.match(p.name))
         else:
             target_dir = target_path.parent
             base_name = target_path.stem
