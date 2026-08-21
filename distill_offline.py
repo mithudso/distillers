@@ -27,6 +27,11 @@ Subcommands:
   extract  plain text          -> HEURISTIC candidate units (degraded, honest)
   mirror   web-text-mirror file-> stats / page list / per-page split / extract
            with per-page URL provenance (bulk also auto-splits mirror files)
+  bulk     dir or mirror file   -> 3-stage offline funnel: exact-hash dedup ->
+           semantic cluster (ollama) -> grouped master markdown
+  index    distillation JSON    -> persistent flat-JSON vector index (ollama)
+  novelty  candidate units JSON -> drop candidates already covered by indexes
+  clean    local HTML/text file -> page text only (tags/CSS/JS stripped)
 
 All modes are stdlib-only. Read the skill for how the LLM pass hands off here.
 """
@@ -306,6 +311,9 @@ def _next_id(units: list[dict]) -> int:
 
 
 def cmd_merge(args) -> int:
+    if not (0.0 <= args.threshold <= 1.0):
+        print(f"ERROR: --threshold must be in [0,1], got {args.threshold}", file=sys.stderr)
+        return 2
     existing = _load_json_input(args.existing)
     new_units = _load_json_input(args.new_units)
     if isinstance(new_units, dict):
@@ -338,11 +346,19 @@ def cmd_merge(args) -> int:
             if sem_targets is not None:
                 r = _cosine(sem_cands[ci], sem_targets[ti])
             else:
-                r = difflib.SequenceMatcher(a=ntext, b=tn, autojunk=False).ratio()
+                sm = difflib.SequenceMatcher(a=ntext, b=tn, autojunk=False)
+                # quick_ratio/real_quick_ratio are provable upper bounds on
+                # ratio() — skipping under-threshold pairs cannot change results
+                # and avoids O(N*M) full edit-distance on large unit sets.
+                if sm.real_quick_ratio() < args.threshold:
+                    continue  # can never fold; only >=threshold matches matter
+                r = sm.ratio()
             if r > best_ratio:
                 best, best_ratio = u, r
         if best is not None and best_ratio >= args.threshold:
-            best.setdefault("duplicates", []).append(nu.get("id") or f"u{nid:03d}")
+            # Folded units never consume an id from the kept-unit counter —
+            # consecutive folds used to log the SAME placeholder id.
+            best.setdefault("duplicates", []).append(nu.get("id") or f"new-{ci:03d}")
             folded += 1
         else:
             uid = f"u{nid:03d}"
@@ -429,9 +445,13 @@ def _html_to_text(body: str) -> str:
 
 
 def cmd_fetch(args) -> int:
+    if not re.match(r"^https?://", args.url):
+        print("ERROR fetch: only http(s) URLs are allowed", file=sys.stderr)
+        return 2
     try:
         out = subprocess.run(
-            ["curl", "-fsSL", "--max-time", str(args.timeout), args.url],
+            # --proto pins curl to http(s) even on redirects (no file:// etc.)
+            ["curl", "-fsSL", "--proto", "=http,https", "--max-time", str(args.timeout), args.url],
             capture_output=True, text=True, check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -728,11 +748,13 @@ def _ollama_embed(texts: list[str], model: str) -> list[list[float]]:
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         raise OllamaUnavailable(f"ollama embed failed ({e})") from e
     
-    embs = data.get("embeddings")
-    if not embs or len(embs) != len(texts):
-        # Fallback for older ollama versions that use /api/embeddings (single prompt)
-        if "embeddings" not in data and "embedding" not in data:
-             raise OllamaUnavailable("ollama returned no/mismatched embeddings")
+    embs = data.get("embeddings") if isinstance(data, dict) else None
+    if not isinstance(embs, list) or len(embs) != len(texts):
+        # A count mismatch would silently misalign unit<->vector pairing in
+        # every caller (zip truncation / positional indexing) — always raise
+        # so callers hit their documented lexical-fallback path instead.
+        got = len(embs) if isinstance(embs, list) else 0
+        raise OllamaUnavailable(f"ollama returned {got} embeddings for {len(texts)} inputs")
     return embs
 
 
@@ -795,6 +817,9 @@ def cmd_novelty(args) -> int:
     candidates NOT already covered (cosine below --threshold to every indexed
     unit). This is the incremental/corpus token-saver: the LLM classify pass
     only ever sees novel material. Falls back to lexical-only if ollama is down."""
+    if not (0.0 <= args.threshold <= 1.0):
+        print(f"ERROR: --threshold must be in [0,1], got {args.threshold}", file=sys.stderr)
+        return 2
     cand = _load_json_input(args.in_file)
     if isinstance(cand, dict):
         cand = cand.get("units") or cand.get("added") or []
@@ -826,9 +851,14 @@ def cmd_novelty(args) -> int:
                 if s > best_sim:
                     best_sim, best_j = s, j
         else:
+            ci_norm = _norm(cand_texts[i])
             for j, it in enumerate(index_texts):
-                s = difflib.SequenceMatcher(a=_norm(cand_texts[i]), b=_norm(it),
-                                            autojunk=False).ratio()
+                sm = difflib.SequenceMatcher(a=ci_norm, b=_norm(it), autojunk=False)
+                # Upper-bound prune: a sub-threshold pair can never count as
+                # matched, so skipping it cannot change the novel/matched split.
+                if sm.real_quick_ratio() < args.threshold:
+                    continue
+                s = sm.ratio()
                 if s > best_sim:
                     best_sim, best_j = s, j
         if best_sim >= args.threshold:
@@ -869,6 +899,34 @@ from html.parser import HTMLParser
 # Helpers
 # --------------------------------------------------------------------------- #
 
+# Filler/boilerplate patterns stripped by clean_and_split. Compiled once at
+# module scope (clean_and_split runs per file over whole corpora). NOTE: the
+# wiki-navigation entries are corpus-specific leftovers from a MediaWiki run —
+# harmless no-ops elsewhere; externalize if a second wiki corpus ever needs
+# its own set.
+_FILLER_PATTERNS = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in (
+    r'\b(?:to be honest|in my opinion|as a matter of fact)\b',
+    r'\b(?:basically|literally|actually|obviously)\b',
+    r'\b(What links here|Related changes|Special pages|Printable version|Permanent link|Page information|Cite this page|Navigation menu|Personal tools|Search|Log in|Main page|Recent changes|Random page|Privacy policy|About DMT Nexus Wiki|Disclaimers|Mobile view)\b',
+    r'\b(Page|File|User page|Category) Discussion View source History\b',
+    r'Pages that link to .*',
+    r'From DMT-Nexus Wiki.*?Hide redirects',
+    r'The following pages link to.*?\(20 50 100 250 500\)',
+    r'No pages link to .*',
+    r'This page was last modified on .*?\.',
+    r'This page has been accessed [\d,]+ times\.',
+    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} Talk for this IP address',
+    r'No higher resolution available\.',
+    r'Click on a date time to view the file as it appeared at that time\.',
+    r'You cannot overwrite this file\.',
+    r'The following page links to this file',
+    r'File history File usage',
+    r'Date TimeThumbnailDimensionsUserComment.*?Talk contribs\)',
+    r'Contents \d+.*?References',
+    r'General Plant Info Geographic distribution Identification Alkaloid content.*?References',
+)]
+
+
 def clean_and_split(raw):
     if '<html' in raw.lower() or '<body' in raw.lower() or '<div' in raw.lower():
         raw = _html_to_text(raw)
@@ -882,29 +940,8 @@ def clean_and_split(raw):
     raw = raw.replace('\n', ' ')
     raw = re.sub(r'[ \t]+', ' ', raw)
     
-    fillers = [
-        r'\b(?:to be honest|in my opinion|as a matter of fact)\b', 
-        r'\b(?:basically|literally|actually|obviously)\b',
-        r'(?i)\b(What links here|Related changes|Special pages|Printable version|Permanent link|Page information|Cite this page|Navigation menu|Personal tools|Search|Log in|Main page|Recent changes|Random page|Privacy policy|About DMT Nexus Wiki|Disclaimers|Mobile view)\b',
-        r'(?i)\b(Page|File|User page|Category) Discussion View source History\b',
-        r'(?i)Pages that link to .*',
-        r'(?i)From DMT-Nexus Wiki.*?Hide redirects',
-        r'(?i)The following pages link to.*?\(20 50 100 250 500\)',
-        r'(?i)No pages link to .*',
-        r'This page was last modified on .*?\.',
-        r'This page has been accessed [\d,]+ times\.',
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} Talk for this IP address',
-        r'No higher resolution available\.',
-        r'Click on a date time to view the file as it appeared at that time\.',
-        r'You cannot overwrite this file\.',
-        r'The following page links to this file',
-        r'File history File usage',
-        r'Date TimeThumbnailDimensionsUserComment.*?Talk contribs\)',
-        r'Contents \d+.*?References',
-        r'General Plant Info Geographic distribution Identification Alkaloid content.*?References'
-    ]
-    for f in fillers:
-        raw = re.sub(f, '', raw, flags=re.IGNORECASE | re.DOTALL)
+    for pat in _FILLER_PATTERNS:
+        raw = pat.sub('', raw)
         
     sentences = []
     # No more parts because we replaced \n with space
@@ -939,16 +976,16 @@ def _load_json_input(path):
     return json.loads(Path(path).expanduser().read_text())
 
 def cmd_bulk(args) -> int:
-    # Set requested defaults
-    args.recursive = True
-    args.resume = True
-    args.fast_clean = True
-    args.semantic = True
+    # Flags are real (BooleanOptionalAction, default ON) — use --no-semantic,
+    # --no-resume, --no-fast-clean, --no-recursive to opt out.
+    if not (0.0 <= args.threshold <= 1.0):
+        print(f"ERROR: --threshold must be in [0,1], got {args.threshold}", file=sys.stderr)
+        return 2
 
     target_path = Path(args.dir)
     if not target_path.exists():
         print(f"ERROR: Path {target_path} does not exist.", file=sys.stderr)
-        return 1
+        return 2
 
     if target_path.is_file():
         raw = target_path.read_text(errors="ignore")
@@ -977,7 +1014,8 @@ def cmd_bulk(args) -> int:
         print(f"Scanning directory {target_dir}...", flush=True)
         # Allow md, txt, and html files
         exts = {".html", ".md", ".txt"}
-        files = [p for p in target_dir.rglob("*") if p.is_file() and p.suffix in exts and p.name not in excluded and "Special_" not in p.name and "Special:" not in str(p)]
+        walker = target_dir.rglob("*") if args.recursive else target_dir.glob("*")
+        files = [p for p in walker if p.is_file() and p.suffix in exts and p.name not in excluded and "Special_" not in p.name and "Special:" not in str(p)]
 
     index_file = target_dir / f".{base_name}_distill_index.json"
     index = {"files_processed": [], "unique_units": {}}
@@ -1000,20 +1038,26 @@ def cmd_bulk(args) -> int:
     save_interval = 50
     
     # STAGE 1: Exact Hash Funnel
-    for f in pending:
-        count += 1
-        print(f"[{count}/{len(pending)}] Extracting: {f}", flush=True)
-        try:
-            raw = f.read_text(errors='ignore')
-            if args.fast_clean:
-                stmts = clean_and_split(raw)
-            else:
-                stmts = [s.strip() for s in raw.splitlines() if len(s.strip()) > 20]
-                
-            for s in stmts:
-                can = get_canonical(s)
-                h = hashlib.md5(can.encode()).hexdigest()
-                
+    preview_out = open(preview_path, "a")  # one handle for the run, not one per statement
+    try:
+        for f in pending:
+            count += 1
+            print(f"[{count}/{len(pending)}] Extracting: {f}", flush=True)
+            # Read + extract FULLY before touching the shared index, so a
+            # mid-file failure can't half-merge statements that a --resume
+            # rerun would then double-count.
+            try:
+                raw = f.read_text(errors='ignore')
+                if args.fast_clean:
+                    stmts = clean_and_split(raw)
+                else:
+                    stmts = [s.strip() for s in raw.splitlines() if len(s.strip()) > 20]
+                staged = [(hashlib.md5(get_canonical(s).encode()).hexdigest(), s) for s in stmts]
+            except Exception as e:
+                print(f"WARN reading {f} failed: {e}", file=sys.stderr)
+                continue
+
+            for h, s in staged:
                 if h in index["unique_units"]:
                     index["unique_units"][h]["count"] += 1
                     if str(f) not in index["unique_units"][h]["sources"]:
@@ -1025,18 +1069,17 @@ def cmd_bulk(args) -> int:
                         "sources": [str(f)],
                         "cat": categorize(s)
                     }
-                    with open(preview_path, 'a') as preview_out:
-                        preview_out.write(f"- {s} ({f.name})\n")
-                        
+                    preview_out.write(f"- {s} ({f.name})\n")
+
             index["files_processed"].append(str(f))
-            
+
             if count % save_interval == 0:
+                preview_out.flush()
                 tmp_index = index_file.with_suffix('.json.tmp')
                 with open(tmp_index, 'w') as out: json.dump(index, out)
                 os.replace(tmp_index, index_file)
-                
-        except Exception as e:
-            print(f"Error reading {f}: {e}")
+    finally:
+        preview_out.close()
             
     tmp_index = index_file.with_suffix('.json.tmp')
     with open(tmp_index, 'w') as out: json.dump(index, out)
@@ -1085,10 +1128,16 @@ def cmd_bulk(args) -> int:
                         c["magnitude"] = precompute_magnitude(v)
                     
         semantic_clusters = []
+        unembedded = []
         for c in lexical_clusters:
             vec = c.get("vector")
             mag = c.get("magnitude", 0.0)
-            if not vec or mag == 0.0: continue
+            if not vec or mag == 0.0:
+                # Embedding failed for this unit (chunk error) — keep it as its
+                # own cluster; a transient Ollama hiccup must never silently
+                # delete extracted content from the master.
+                unembedded.append(dict(c))
+                continue
             
             placed = False
             for sc in semantic_clusters:
@@ -1107,6 +1156,9 @@ def cmd_bulk(args) -> int:
                 sc["centroid_mag"] = mag
                 semantic_clusters.append(sc)
                 
+        if unembedded:
+            print(f"WARN: {len(unembedded)} units kept unclustered (embedding failed for their chunks)", file=sys.stderr)
+            semantic_clusters.extend(unembedded)
         semantic_clusters.sort(key=lambda x: x["count"], reverse=True)
         
         with open(out_md, 'w') as f:
@@ -1156,17 +1208,21 @@ It implements the offline feature pipeline we've built, including:
 
 Examples:
   distill_offline.py bulk ./wiki --recursive --resume --fast-clean --semantic
-  distill_offline.py bulk ./wiki --fast-clean (just strip & combine quickly)
+  distill_offline.py bulk ./wiki --no-semantic --no-resume  (lexical-only quick pass, no network)
 """
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    b = sub.add_parser("bulk", help="bulk process a folder: clean, extract, index, and dedup")
-    b.add_argument("dir", help="target directory to process")
-    b.add_argument("--recursive", action="store_true", help="scan subdirectories recursively")
-    b.add_argument("--resume", action="store_true", help="save/load state from .bulk_distill_index.json to resume on interrupt")
-    b.add_argument("--fast-clean", action="store_true", help="strip HTML, filler words, greetings, and normalize text")
-    b.add_argument("--semantic", action="store_true", help="use Ollama embeddings to categorize, cluster, and deduplicate")
+    b = sub.add_parser("bulk", help="bulk process a folder (or one mirror file): clean, extract, index, and dedup")
+    b.add_argument("dir", help="target directory (or single mirror/doc file) to process")
+    b.add_argument("--recursive", action=argparse.BooleanOptionalAction, default=True,
+                   help="scan subdirectories recursively (default on; --no-recursive for top level only)")
+    b.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True,
+                   help="save/load state to resume on interrupt (default on)")
+    b.add_argument("--fast-clean", action=argparse.BooleanOptionalAction, default=True,
+                   help="strip HTML, filler words, greetings, normalize text (default on)")
+    b.add_argument("--semantic", action=argparse.BooleanOptionalAction, default=True,
+                   help="Ollama embeddings for cluster+dedup (default on; --no-semantic = lexical only, no network)")
     b.add_argument("--threshold", type=float, default=0.88, help="cosine similarity threshold for semantic dedup (default: 0.88)")
     b.add_argument("--model", default=DEFAULT_EMBED_MODEL, help="ollama embedding model")
     b.set_defaults(func=cmd_bulk)
@@ -1248,7 +1304,9 @@ Examples:
     args = p.parse_args(argv)
     try:
         return args.func(args)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        # OSError covers FileNotFound/IsADirectory/Permission/FileExists —
+        # any bad --in/--old/--new path fails with a clean ERROR, not a traceback.
         print(f"ERROR {e}", file=sys.stderr)
         return 2
 
