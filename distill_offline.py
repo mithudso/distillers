@@ -421,13 +421,21 @@ class _TextExtractor(HTMLParser):
         return raw.strip()
 
 
+_HTML_TAG_RE = re.compile(r"</?(?:div|p|span|a|body|head|table|tr|td|ul|li|script|style|img|br|h[1-6])\b[^>]*>")
+
+
 def _looks_like_html(text: str, path: str | None = None) -> bool:
-    """Detect HTML by extension or by content — used to auto-strip before distill."""
+    """Detect HTML by extension or by content — used to auto-strip before
+    distill. Content detection needs STRUCTURAL evidence (doctype/<html>, or a
+    real density of tags), not a mere mention of a tag name: prose ABOUT web
+    dev must never get routed through trafilatura, which silently drops text
+    it can't classify as main content."""
     if path and path.lower().rsplit(".", 1)[-1] in ("html", "htm", "xhtml"):
         return True
     head = text[:4096].lower()
-    return ("<!doctype html" in head or "<html" in head or "<body" in head
-            or ("<div" in head and "</" in head))
+    if "<!doctype html" in head or "<html" in head:
+        return True
+    return len(_HTML_TAG_RE.findall(head)) >= 8
 
 
 def _html_to_text(body: str) -> str:
@@ -640,14 +648,34 @@ def split_mirror_to_dir(text: str, out_dir: Path) -> int:
     if not pages:
         raise ValueError("input is not a web-text-mirror docset (no URL banners found)")
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Clear stale page files from a previous split: if the mirror shrank or
-    # crawl order changed, leftovers would contaminate a later bulk run.
-    for old in out_dir.glob("*.md"):
-        if _MIRROR_PAGE_FILE_RE.match(old.name):
-            old.unlink()
+    # Clear stale page files from a previous split (a shrunk/reordered mirror
+    # would otherwise contaminate a later bulk run) — but only files THIS tool
+    # wrote, tracked in a manifest. Numbered .md files are a common personal
+    # note convention; never delete files we can't prove are ours.
+    manifest_path = out_dir / ".mirror_split_manifest.json"
+    ours = set()
+    if manifest_path.exists():
+        try:
+            ours = set(json.loads(manifest_path.read_text()))
+        except (OSError, json.JSONDecodeError):
+            ours = set()
+    strays = [p.name for p in out_dir.glob("*.md")
+              if _MIRROR_PAGE_FILE_RE.match(p.name) and p.name not in ours]
+    if strays:
+        raise ValueError(
+            f"{out_dir} already contains {len(strays)} numbered .md file(s) not "
+            f"written by a previous split (e.g. {strays[0]!r}) — refusing to "
+            "overwrite them; use an empty/dedicated --split-dir")
+    for name in ours:
+        stale = out_dir / name
+        if stale.exists():
+            stale.unlink()
+    written = []
     for n, pg in enumerate(pages, start=1):
         fname = f"{n:03d}_{_page_slug(pg['url'])}.md"
         (out_dir / fname).write_text(f"URL: {pg['url']}\n\n{pg['text']}\n")
+        written.append(fname)
+    manifest_path.write_text(json.dumps(written, indent=0))
     return len(pages)
 
 
@@ -736,7 +764,12 @@ def _ollama_embed(texts: list[str], model: str) -> list[list[float]]:
             import os
             env = os.environ.copy()
             env["OLLAMA_HOST"] = OLLAMA_URL
-            subprocess.run(["ollama", "pull", model], env=env, check=True)
+            try:
+                subprocess.run(["ollama", "pull", model], env=env, check=True)
+            except (subprocess.SubprocessError, FileNotFoundError) as pull_err:
+                # Typo'd model, registry unreachable, no ollama CLI, disk full —
+                # keep the documented clean-error/lexical-fallback contract.
+                raise OllamaUnavailable(f"ollama pull '{model}' failed: {pull_err}") from pull_err
             # Retry once
             try:
                 with urllib.request.urlopen(req, timeout=120) as resp:
@@ -1304,7 +1337,7 @@ Examples:
     args = p.parse_args(argv)
     try:
         return args.func(args)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
         # OSError covers FileNotFound/IsADirectory/Permission/FileExists —
         # any bad --in/--old/--new path fails with a clean ERROR, not a traceback.
         print(f"ERROR {e}", file=sys.stderr)
