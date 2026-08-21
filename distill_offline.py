@@ -25,6 +25,8 @@ Subcommands:
   merge    existing + new units-> deduped-against-existing units JSON (re-emit)
   fetch    URL                 -> plain text (offline ingest; no MCP round-trip)
   extract  plain text          -> HEURISTIC candidate units (degraded, honest)
+  mirror   web-text-mirror file-> stats / page list / per-page split / extract
+           with per-page URL provenance (bulk also auto-splits mirror files)
 
 All modes are stdlib-only. Read the skill for how the LLM pass hands off here.
 """
@@ -483,6 +485,32 @@ def _heuristic_type(sent: str) -> str:
     return "statement"
 
 
+def _extract_units_from_text(text: str, anchor_prefix: str = "", start_id: int = 1) -> tuple[list[dict], int]:
+    """Shared heuristic extractor. anchor_prefix (e.g. a page URL) is prepended
+    to the per-line anchor so multi-page inputs keep per-page provenance."""
+    units = []
+    nid = start_id
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        line = line.strip()
+        if not line or len(line) < 20:
+            continue
+        for sent in _SENT_SPLIT.split(line):
+            sent = sent.strip()
+            if len(sent) < 20:
+                continue
+            anchor = f"{anchor_prefix}#L{lineno}" if anchor_prefix else f"L{lineno}"
+            units.append({
+                "id": f"u{nid:03d}",
+                "type": _heuristic_type(sent),
+                "text": sent,
+                "source_anchor": anchor,
+                "salience": "medium",
+                "canonical": f"u{nid:03d}",
+            })
+            nid += 1
+    return units, nid
+
+
 def cmd_extract(args) -> int:
     if args.in_file in (None, "-"):
         text = sys.stdin.read()
@@ -492,25 +520,15 @@ def cmd_extract(args) -> int:
         path = args.in_file
     if _looks_like_html(text, path):
         text = _html_to_text(text)  # distill only page text, never markup
-    units = []
-    nid = 1
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        line = line.strip()
-        if not line or len(line) < 20:
-            continue
-        for sent in _SENT_SPLIT.split(line):
-            sent = sent.strip()
-            if len(sent) < 20:
-                continue
-            units.append({
-                "id": f"u{nid:03d}",
-                "type": _heuristic_type(sent),
-                "text": sent,
-                "source_anchor": f"L{lineno}",
-                "salience": "medium",
-                "canonical": f"u{nid:03d}",
-            })
-            nid += 1
+    pages = parse_mirror(text)
+    if pages:
+        # web-text-mirror docset: anchor every unit to its originating page URL
+        units, nid = [], 1
+        for pg in pages:
+            page_units, nid = _extract_units_from_text(pg["text"], anchor_prefix=pg["url"], start_id=nid)
+            units.extend(page_units)
+    else:
+        units, _ = _extract_units_from_text(text)
     result = {
         "_warning": "HEURISTIC DEGRADED EXTRACT — not a real distillation. "
                     "No semantic dedup, no cross-doc reconciliation, coarse "
@@ -519,6 +537,136 @@ def cmd_extract(args) -> int:
         "units": units,
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# mirror — web-text-mirror multi-page docset support
+#
+# web-text-mirror concatenates a whole docset into ONE markdown file, with each
+# page bounded by a banner triple:
+#
+#   ================================================================== (>=10 =)
+#   URL: https://example.com/docs/page.html
+#   ================================================================== (>=10 =)
+#   <page text ...>
+#
+# This section parses that fixed contract so every downstream stage (extract,
+# bulk, indexing) keeps per-page URL provenance instead of treating the mirror
+# as one giant anonymous blob.
+# --------------------------------------------------------------------------- #
+
+_MIRROR_BANNER_RE = re.compile(r"^={10,}\s*$")
+_MIRROR_URL_RE = re.compile(r"^URL:\s*(\S+)\s*$")
+
+
+def parse_mirror(text: str) -> list[dict] | None:
+    """Split a web-text-mirror file into pages. Returns a list of
+    {url, start_line, text} dicts, or None when the text is not a mirror
+    (fewer than 2 URL banners found)."""
+    lines = text.splitlines()
+    page_starts = []  # (index_of_banner_line, url)
+    for i in range(len(lines) - 2):
+        if (_MIRROR_BANNER_RE.match(lines[i])
+                and _MIRROR_BANNER_RE.match(lines[i + 2])):
+            m = _MIRROR_URL_RE.match(lines[i + 1])
+            if m:
+                page_starts.append((i, m.group(1)))
+    if len(page_starts) < 2:
+        return None
+    pages = []
+    for n, (i, url) in enumerate(page_starts):
+        body_start = i + 3
+        body_end = page_starts[n + 1][0] if n + 1 < len(page_starts) else len(lines)
+        pages.append({
+            "url": url,
+            "start_line": body_start + 1,
+            "text": "\n".join(lines[body_start:body_end]).strip("\n"),
+        })
+    return pages
+
+
+def _mirror_hostname(url: str) -> str:
+    m = re.match(r"https?://([^/]+)", url)
+    return m.group(1) if m else "unknown-host"
+
+
+def docset_key(pages: list[dict], path) -> str:
+    """Deterministic docset identity: <source hostname>__<mirror filename stem>.
+    Shared index/collection names derive from this so consuming skills reuse
+    one index per docset instead of re-embedding."""
+    host = _mirror_hostname(pages[0]["url"]) if pages else "unknown-host"
+    stem = Path(path).stem if path else "stdin"
+    return f"{_slugify(host)}__{_slugify(stem)}"
+
+
+def _page_slug(url: str, maxlen: int = 60) -> str:
+    m = re.match(r"https?://[^/]+/?(.*)", url)
+    tail = (m.group(1) if m else url).rstrip("/")
+    tail = re.sub(r"\.html?$", "", tail)
+    slug = _slugify(tail.replace("/", "-")) or "index"
+    return slug[:maxlen]
+
+
+def split_mirror_to_dir(text: str, out_dir: Path) -> int:
+    """Write one .md file per mirror page into out_dir. Filenames embed the
+    page's URL path so bulk's per-file source tracking keeps provenance; the
+    first line repeats the full URL (clean_and_split strips URLs, so it never
+    pollutes extracted units)."""
+    pages = parse_mirror(text)
+    if not pages:
+        raise ValueError("input is not a web-text-mirror docset (no URL banners found)")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for n, pg in enumerate(pages, start=1):
+        fname = f"{n:03d}_{_page_slug(pg['url'])}.md"
+        (out_dir / fname).write_text(f"URL: {pg['url']}\n\n{pg['text']}\n")
+    return len(pages)
+
+
+def cmd_mirror(args) -> int:
+    if args.in_file in (None, "-"):
+        text = sys.stdin.read()
+        path = None
+    else:
+        text = _read_text(args.in_file)
+        path = args.in_file
+    pages = parse_mirror(text)
+    if not pages:
+        print("ERROR: input is not a web-text-mirror docset (no URL banners found)", file=sys.stderr)
+        return 2
+
+    if args.list:
+        for pg in pages:
+            print(pg["url"])
+        return 0
+
+    if args.split_dir:
+        n = split_mirror_to_dir(text, Path(args.split_dir).expanduser())
+        print(f"Split {n} pages into {args.split_dir}")
+        return 0
+
+    if args.extract:
+        units, nid = [], 1
+        for pg in pages:
+            page_units, nid = _extract_units_from_text(pg["text"], anchor_prefix=pg["url"], start_id=nid)
+            units.extend(page_units)
+        print(json.dumps({
+            "_warning": "HEURISTIC DEGRADED EXTRACT — see extract subcommand.",
+            "docset": docset_key(pages, path),
+            "units": units,
+        }, indent=2, ensure_ascii=False))
+        return 0
+
+    # default: --stats
+    hosts = sorted({_mirror_hostname(pg["url"]) for pg in pages})
+    stats = {
+        "docset": docset_key(pages, path),
+        "pages": len(pages),
+        "bytes": len(text.encode()),
+        "est_tokens": len(text) // 4,
+        "hosts": hosts,
+    }
+    print(json.dumps(stats, indent=2))
     return 0
 
 
@@ -795,9 +943,22 @@ def cmd_bulk(args) -> int:
         return 1
 
     if target_path.is_file():
-        target_dir = target_path.parent
-        base_name = target_path.stem
-        files = [target_path]
+        raw = target_path.read_text(errors="ignore")
+        mirror_pages = parse_mirror(raw)
+        if mirror_pages:
+            # web-text-mirror docset: split per page first so unit sources
+            # carry per-page URL provenance instead of one giant blob.
+            pages_dir = target_path.parent / f"{target_path.stem}.pages"
+            n = split_mirror_to_dir(raw, pages_dir)
+            print(f"Mirror docset detected ({docset_key(mirror_pages, target_path)}): "
+                  f"split {n} pages into {pages_dir}", flush=True)
+            target_dir = pages_dir
+            base_name = target_path.stem
+            files = sorted(p for p in pages_dir.glob("*.md"))
+        else:
+            target_dir = target_path.parent
+            base_name = target_path.stem
+            files = [target_path]
     else:
         target_dir = target_path
         base_name = target_path.resolve().name
@@ -1061,6 +1222,17 @@ Examples:
     e.add_argument("--in", dest="in_file", default="-",
                    help="text file, or - for stdin")
     e.set_defaults(func=cmd_extract)
+
+    mr = sub.add_parser("mirror",
+                        help="web-text-mirror docset: stats/list/split/extract with per-page URL provenance")
+    mr.add_argument("--in", dest="in_file", default="-",
+                    help="mirror .md file (required in practice; - for stdin)")
+    mr.add_argument("--list", action="store_true", help="print one page URL per line")
+    mr.add_argument("--split-dir", dest="split_dir",
+                    help="write one .md per page into this directory (for bulk)")
+    mr.add_argument("--extract", action="store_true",
+                    help="heuristic units across all pages, source_anchor = page URL")
+    mr.set_defaults(func=cmd_mirror)
 
     args = p.parse_args(argv)
     try:
