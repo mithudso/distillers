@@ -1016,11 +1016,53 @@ def _load_json_input(path):
         return json.load(sys.stdin)
     return json.loads(Path(path).expanduser().read_text())
 
+def _shard_owns(path: Path, shard_index: int, shard_count: int) -> bool:
+    """Stable (non-randomized) hash-mod ownership, same scheme as
+    web-text-mirror's URL sharding -- a file's shard never changes between
+    runs/machines, so --resume still works per shard."""
+    return int(hashlib.md5(str(path).encode()).hexdigest(), 16) % shard_count == shard_index
+
+
+def _shard_index_path(target_dir: Path, base_name: str, shard_index: int) -> Path:
+    return target_dir / f".{base_name}_distill_index.shard{shard_index}.json"
+
+
+def _merge_shard_indexes(target_dir: Path, base_name: str, shard_count: int) -> dict:
+    """Associative merge of N shards' {hash: unit} maps -- safe because Stage 1
+    is embarrassingly parallel (each file's lines hash independently); only
+    Stage 3's semantic clustering needs the FULL merged unique-unit list, so
+    it still runs once, here, after every shard's Stage 1 is in."""
+    merged = {"files_processed": [], "unique_units": {}}
+    seen_files = set()
+    for i in range(shard_count):
+        shard_path = _shard_index_path(target_dir, base_name, i)
+        if not shard_path.exists():
+            print(f"WARN: shard {i} index missing ({shard_path}), merging without it", file=sys.stderr)
+            continue
+        with open(shard_path) as f:
+            shard = json.load(f)
+        for h, unit in shard.get("unique_units", {}).items():
+            if h in merged["unique_units"]:
+                existing = merged["unique_units"][h]
+                existing["count"] += unit["count"]
+                existing["sources"] = list(set(existing["sources"]) | set(unit["sources"]))
+            else:
+                merged["unique_units"][h] = unit
+        for fp in shard.get("files_processed", []):
+            if fp not in seen_files:
+                seen_files.add(fp)
+                merged["files_processed"].append(fp)
+    return merged
+
+
 def cmd_bulk(args) -> int:
     # Flags are real (BooleanOptionalAction, default ON) — use --no-semantic,
     # --no-resume, --no-fast-clean, --no-recursive to opt out.
     if not (0.0 <= args.threshold <= 1.0):
         print(f"ERROR: --threshold must be in [0,1], got {args.threshold}", file=sys.stderr)
+        return 2
+    if args.shard_count > 1 and not (0 <= args.shard_index < args.shard_count):
+        print(f"ERROR: --shard-index must be in [0,{args.shard_count})", file=sys.stderr)
         return 2
 
     target_path = Path(args.dir)
@@ -1058,20 +1100,48 @@ def cmd_bulk(args) -> int:
         walker = target_dir.rglob("*") if args.recursive else target_dir.glob("*")
         files = [p for p in walker if p.is_file() and p.suffix in exts and p.name not in excluded and "Special_" not in p.name and "Special:" not in str(p)]
 
-    index_file = target_dir / f".{base_name}_distill_index.json"
-    index = {"files_processed": [], "unique_units": {}}
-    if args.resume and index_file.exists():
-        try:
-            with open(index_file) as f:
-                index = json.load(f)
-        except Exception as e:
-            print(f"WARN: Could not load index ({e}), starting fresh.", file=sys.stderr)
+    if args.shard_count > 1 and target_path.is_file():
+        # A raw mirror file triggers a destructive split (clears stale pages
+        # from a prior run) -- concurrent shards racing that would corrupt
+        # each other's output. Sharding only ever targets an ALREADY-split
+        # pages dir (the dispatcher splits once, up front, then fans out).
+        print("ERROR: --shard-count on a single file would race the mirror "
+              "split across shards; pre-split with 'mirror --split-dir' "
+              "and shard over that directory instead.", file=sys.stderr)
+        return 2
 
-    index.setdefault("unique_units", {})
-    index.setdefault("files_processed", [])
-    
-    pending = [f for f in files if str(f) not in index["files_processed"]]
-    print(f"Total files: {len(files)} | Processed: {len(index['files_processed'])} | Pending: {len(pending)}")
+    if args.merge_shards:
+        print(f"Merging {args.shard_count} shard indexes for {base_name}...", flush=True)
+        index = _merge_shard_indexes(target_dir, base_name, args.shard_count)
+        index_file = target_dir / f".{base_name}_distill_index.json"
+        tmp_index = index_file.with_suffix('.json.tmp')
+        with open(tmp_index, 'w') as out:
+            json.dump(index, out)
+        os.replace(tmp_index, index_file)
+        print(f"Merged: {len(index['unique_units'])} unique units from "
+              f"{len(index['files_processed'])} files.", flush=True)
+        pending = []  # Stage 1 already done per-shard; fall through to Stage 3
+    else:
+        if args.shard_count > 1:
+            index_file = _shard_index_path(target_dir, base_name, args.shard_index)
+            files = [f for f in files if _shard_owns(f, args.shard_index, args.shard_count)]
+        else:
+            index_file = target_dir / f".{base_name}_distill_index.json"
+
+        index = {"files_processed": [], "unique_units": {}}
+        if args.resume and index_file.exists():
+            try:
+                with open(index_file) as f:
+                    index = json.load(f)
+            except Exception as e:
+                print(f"WARN: Could not load index ({e}), starting fresh.", file=sys.stderr)
+
+        index.setdefault("unique_units", {})
+        index.setdefault("files_processed", [])
+
+        pending = [f for f in files if str(f) not in index["files_processed"]]
+        print(f"Total files: {len(files)} | Processed: {len(index['files_processed'])} | Pending: {len(pending)}"
+              + (f" | shard {args.shard_index}/{args.shard_count}" if args.shard_count > 1 else ""))
 
     preview_path = target_dir / f"{base_name}_live_preview.md"
     
@@ -1125,10 +1195,18 @@ def cmd_bulk(args) -> int:
     tmp_index = index_file.with_suffix('.json.tmp')
     with open(tmp_index, 'w') as out: json.dump(index, out)
     os.replace(tmp_index, index_file)
-    
+
     unique_list = list(index["unique_units"].values())
     print(f"\nStage 1 Complete: {len(unique_list)} exact-unique units.")
-    
+
+    if args.shard_count > 1 and not args.merge_shards:
+        # This shard's slice of Stage 1 is done. Semantic clustering needs
+        # every shard's units in one place -- run '--merge-shards' once, after
+        # every shard here has finished, to do Stage 2/3 on the combined set.
+        print(f"Shard {args.shard_index}/{args.shard_count} done -- "
+              f"run --merge-shards once all shards finish.", flush=True)
+        return 0
+
     # STAGE 2: Removed O(N^2) Jaccard. We rely on Exact Match + Semantic.
     lexical_clusters = []
     for u in unique_list:
@@ -1266,6 +1344,13 @@ Examples:
                    help="Ollama embeddings for cluster+dedup (default on; --no-semantic = lexical only, no network)")
     b.add_argument("--threshold", type=float, default=0.88, help="cosine similarity threshold for semantic dedup (default: 0.88)")
     b.add_argument("--model", default=DEFAULT_EMBED_MODEL, help="ollama embedding model")
+    b.add_argument("--shard-index", type=int, default=0,
+                   help="this process's shard number, 0-based (default: 0, unsharded)")
+    b.add_argument("--shard-count", type=int, default=1,
+                   help="total shards splitting Stage 1 across boxes (default: 1)")
+    b.add_argument("--merge-shards", action="store_true",
+                   help="skip Stage 1; merge every shard's index and run Stage 2/3 once "
+                        "(run after all --shard-index workers finish)")
     b.set_defaults(func=cmd_bulk)
 
     r = sub.add_parser("render", help="compact units JSON -> md+json files")
