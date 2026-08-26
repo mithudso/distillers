@@ -39,6 +39,7 @@ All modes are stdlib-only. Read the skill for how the LLM pass hands off here.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as _dt
 import difflib
 import html
@@ -59,6 +60,11 @@ INDEX_DIR = DIST_DIR / ".index"
 # Ollama is used ONLY as an offline semantic layer (dedup + novelty filtering).
 # It never reads or generates prose — embeddings only — so it adds no LLM tokens.
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://192.168.4.75:11434").rstrip("/")
+# Optional multi-host round-robin for the merge stage's Stage-3 embedding —
+# a single-host embed serializes every chunk behind one Ollama instance's
+# `-np 1` concurrency; spreading chunks over all 3 boxes' Ollama instances
+# cuts merge wall time roughly by the number of hosts.
+OLLAMA_URLS = [u.strip().rstrip("/") for u in os.environ.get("OLLAMA_HOSTS", "").split(",") if u.strip()] or [OLLAMA_URL]
 DEFAULT_EMBED_MODEL = os.environ.get("DISTILL_EMBED_MODEL", "mxbai-embed-large")
 
 # Taxonomy order drives section order in the markdown. Keep in sync with SKILL.md.
@@ -751,14 +757,15 @@ class OllamaUnavailable(RuntimeError):
     pass
 
 
-def _ollama_embed(texts: list[str], model: str) -> list[list[float]]:
+def _ollama_embed(texts: list[str], model: str, host: str | None = None) -> list[list[float]]:
     """Batch-embed via ollama /api/embed. Raises OllamaUnavailable on any error
     so callers can fall back to the lexical path instead of dying."""
     if not texts:
         return []
+    base_url = (host or OLLAMA_URL).rstrip("/")
     payload = json.dumps({"model": model, "input": texts}).encode()
     req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/embed",
+        f"{base_url}/api/embed",
         data=payload,
         headers={"Content-Type": "application/json"},
     )
@@ -1225,20 +1232,28 @@ def cmd_bulk(args) -> int:
         if texts_to_embed:
             print(f"Embedding {len(texts_to_embed)} representatives...")
             
-            # Chunk embeddings to avoid Ollama timeouts on massive lists
-            all_embs = []
+            # Chunk embeddings to avoid Ollama timeouts on massive lists.
+            # Chunks round-robin across every host in OLLAMA_URLS (set via
+            # OLLAMA_HOSTS, comma-separated) and run concurrently -- a single
+            # host serializes every chunk behind its `-np 1` concurrency, so
+            # spreading across N hosts cuts wall time roughly Nx.
             chunk_size = 100
-            for i in range(0, len(texts_to_embed), chunk_size):
-                chunk = texts_to_embed[i:i + chunk_size]
+            chunks = [texts_to_embed[i:i + chunk_size] for i in range(0, len(texts_to_embed), chunk_size)]
+            results: list[list[list[float]] | None] = [None] * len(chunks)
+
+            def _embed_one(idx: int, chunk: list[str]) -> None:
+                host = OLLAMA_URLS[idx % len(OLLAMA_URLS)]
                 try:
-                    embs = _ollama_embed(chunk, args.model)
-                    if embs:
-                        all_embs.extend(embs)
-                    else:
-                        all_embs.extend([None] * len(chunk))
+                    embs = _ollama_embed(chunk, args.model, host=host)
+                    results[idx] = embs if embs else [None] * len(chunk)
                 except Exception as e:
-                    print(f"WARN: Embedding chunk failed ({e}), skipping chunk.", file=sys.stderr)
-                    all_embs.extend([None] * len(chunk))
+                    print(f"WARN: Embedding chunk {idx} on {host} failed ({e}), skipping chunk.", file=sys.stderr)
+                    results[idx] = [None] * len(chunk)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(OLLAMA_URLS))) as ex:
+                list(ex.map(lambda a: _embed_one(*a), enumerate(chunks)))
+
+            all_embs = [v for chunk_res in results for v in chunk_res]
                     
             if all_embs:
                 for c, v in zip([x for x in lexical_clusters if "vector" not in x], all_embs):
