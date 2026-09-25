@@ -59,7 +59,7 @@ INDEX_DIR = DIST_DIR / ".index"
 
 # Ollama is used ONLY as an offline semantic layer (dedup + novelty filtering).
 # It never reads or generates prose — embeddings only — so it adds no LLM tokens.
-OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://192.168.4.75:11434").rstrip("/")
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 # Optional multi-host round-robin for the merge stage's Stage-3 embedding —
 # a single-host embed serializes every chunk behind one Ollama instance's
 # `-np 1` concurrency; spreading chunks over all 3 boxes' Ollama instances
