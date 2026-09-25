@@ -1,0 +1,30 @@
+<!-- Generated 2026-09-25 [gen: p/2.0.0]; verified-as-of 2026-09-25 -->
+
+# distillers
+
+> Offline document-distillation engine, the zero-LLM-token half of a docs-to-skill pipeline. distill_offline.py (stdlib-only Python) mechanically reduces large text corpora, especially web-text-mirror docset mirrors, by splitting, extracting, deduplicating, rendering, indexing and novelty filtering.
+
+## Docs
+
+- [README.md](README.md): Subcommand table, mirror format, config
+- [CLAUDE.md](CLAUDE.md): Ground rules and verification
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): Pipeline architecture
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): Development
+- [docs/TESTING.md](docs/TESTING.md): Testing
+- [STATUS.md](STATUS.md): Build state
+- [SUMMARY.md](SUMMARY.md): Design decisions
+- [KICKOFF.md](KICKOFF.md): Build brief
+
+## Key files
+
+- [distill_offline.py](distill_offline.py): Canonical stdlib-only distillation script
+- [split_master.py](split_master.py): Legacy one-off splitter
+- [categorize_topics.py](categorize_topics.py): Legacy one-off categorizer
+- [clean_binary_garbage.py](clean_binary_garbage.py): Legacy cleanup
+- [clean_index_garbage.py](clean_index_garbage.py): Legacy cleanup
+
+## Companion files
+
+- [llms-full.txt](llms-full.txt): concatenated key docs
+- [llms-small.txt](llms-small.txt): condensed summary
+- [llms-facts.txt](llms-facts.txt): sourced one-line facts
