@@ -1,0 +1,15 @@
+<!-- Generated 2026-09-25 [gen: p/2.0.0]; verified-as-of 2026-09-25 -->
+
+# distillers (small)
+
+> Offline document-distillation engine, the zero-LLM-token half of a docs-to-skill pipeline. distill_offline.py (stdlib-only Python) mechanically reduces large text corpora, especially web-text-mirror docset mirrors, by splitting, extracting, deduplicating, rendering, indexing and novelty filtering.
+
+## Essentials
+
+- Script: python3 distill_offline.py <subcommand>
+- Subcommands: mirror, bulk, render, diff, merge, index, novelty, fetch, clean, extract
+- Env: OLLAMA_HOST, DISTILL_EMBED_MODEL (default mxbai-embed-large)
+- Verify: python3 -m py_compile distill_offline.py
+- Every Ollama path degrades to lexical (difflib) matching
+
+See llms.txt for the index and llms-facts.txt for sourced facts.
