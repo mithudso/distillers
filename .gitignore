@@ -9,3 +9,5 @@ __pycache__/
 .*_distill_index.json
 *_master.md
 *_live_preview.md
+.venv/
+*.egg-info/

@@ -11,12 +11,13 @@ pipeline it belongs to.
 - `distill_offline.py` is CANONICAL here. The copy in
   `~/.claude/skills/document-distiller-offline/` is synced FROM this repo —
   after changing it here, re-copy it there.
-- Stdlib only in `distill_offline.py`. No new dependencies; Ollama is reached
-  via `urllib`, and every Ollama path must degrade gracefully to the lexical
-  path when the host is down.
+- `distill_offline.py` is stdlib plus one dependency: the shared `ollama-client`
+  library (`pip install -e ~/dev/libraries/ollama-client`). Never inline its
+  code. Every Ollama path must still degrade gracefully to the lexical path when
+  the host is down or the library is not installed.
 - Config via env, never hardcoded: `OLLAMA_HOST` (default
-  `http://192.168.4.75:11434`), `DISTILL_EMBED_MODEL` (default
-  `mxbai-embed-large`).
+  `http://localhost:11434`), `OLLAMA_HOSTS` (comma-separated pool, optional
+  `url=weight`), `DISTILL_EMBED_MODEL` (default `mxbai-embed-large`).
 - The mirror banner format (`====` / `URL: <url>` / `====`) is a fixed input
   contract owned by web-text-mirror — adapt this repo to it, never the reverse.
   A near-identical parser lives in `~/.global-ai-hub/scripts/docset_indexer.py`

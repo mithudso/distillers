@@ -2,8 +2,13 @@
 
 ## Setup
 
-None. `distill_offline.py` is stdlib-only Python 3 — no venv, no `pip install`,
-no `requirements.txt`. Clone and run.
+`distill_offline.py` needs only the shared `ollama-client` library for
+embeddings (without it every embedding path falls back to lexical):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e ~/dev/libraries/ollama-client
+.venv/bin/python -m unittest discover -s tests -v   # Ollama layer, fake server
+```
 
 Ollama is optional and reached over HTTP via `urllib`; every embedding path
 degrades to lexical (`difflib`) matching when the host is down. Configure it by
@@ -11,7 +16,8 @@ environment, never in code:
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `OLLAMA_HOST` | `http://192.168.4.75:11434` | embedding endpoint (embeddings only) |
+| `OLLAMA_HOST` | `http://localhost:11434` | embedding endpoint (embeddings only) |
+| `OLLAMA_HOSTS` | unset | comma-separated host pool (`url=weight` optional); overrides `OLLAMA_HOST` |
 | `DISTILL_EMBED_MODEL` | `mxbai-embed-large` | embedding model |
 
 ## Verify

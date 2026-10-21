@@ -59,11 +59,24 @@ INDEX_DIR = DIST_DIR / ".index"
 
 # Ollama is used ONLY as an offline semantic layer (dedup + novelty filtering).
 # It never reads or generates prose — embeddings only — so it adds no LLM tokens.
+# Transport (weighted pool, failover, retry, batching, pull) lives in the shared
+# `ollama-client` library; this file keeps only the env mapping below.
+try:
+    from ollama_client import OllamaClient, OllamaPool, OllamaUnavailable, cosine as _cosine
+    _HAVE_OLLAMA_CLIENT = True
+except ImportError:  # keep the lexical-fallback contract when the library is absent
+    _HAVE_OLLAMA_CLIENT = False
+
+    class OllamaUnavailable(RuntimeError):  # type: ignore[no-redef]
+        pass
+
+    def _cosine(a, b):  # type: ignore[no-redef]
+        raise OllamaUnavailable("ollama-client is not installed (pip install ollama-client)")
+
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-# Optional multi-host round-robin for the merge stage's Stage-3 embedding —
-# a single-host embed serializes every chunk behind one Ollama instance's
-# `-np 1` concurrency; spreading chunks over all 3 boxes' Ollama instances
-# cuts merge wall time roughly by the number of hosts.
+# Optional multi-host pool (OLLAMA_HOSTS, comma-separated; `url=weight` allowed).
+# Falls back to the single OLLAMA_HOST. Chunks of the merge stage's Stage-3
+# embedding run concurrently, one worker per host, with per-host failover.
 OLLAMA_URLS = [u.strip().rstrip("/") for u in os.environ.get("OLLAMA_HOSTS", "").split(",") if u.strip()] or [OLLAMA_URL]
 DEFAULT_EMBED_MODEL = os.environ.get("DISTILL_EMBED_MODEL", "mxbai-embed-large")
 
@@ -753,64 +766,55 @@ def cmd_mirror(args) -> int:
 # lexical difflib path misses. All of this is embeddings-only: zero LLM tokens.
 # --------------------------------------------------------------------------- #
 
-class OllamaUnavailable(RuntimeError):
-    pass
+_CLIENT = None
+
+
+def _client(host: str | None = None, workers: int = 1):
+    """Pool-backed client: OLLAMA_HOSTS (else OLLAMA_HOST) weighted pool, or one explicit host."""
+    global _CLIENT
+    if not _HAVE_OLLAMA_CLIENT:
+        raise OllamaUnavailable("ollama-client is not installed (pip install ollama-client)")
+    if host is not None:
+        return OllamaClient(OllamaPool([host]), embed_model=DEFAULT_EMBED_MODEL)
+    if workers > 1:
+        return OllamaClient(OllamaPool(OLLAMA_URLS), embed_model=DEFAULT_EMBED_MODEL, workers=workers)
+    if _CLIENT is None:
+        _CLIENT = OllamaClient(OllamaPool(OLLAMA_URLS), embed_model=DEFAULT_EMBED_MODEL)
+    return _CLIENT
 
 
 def _ollama_embed(texts: list[str], model: str, host: str | None = None) -> list[list[float]]:
-    """Batch-embed via ollama /api/embed. Raises OllamaUnavailable on any error
-    so callers can fall back to the lexical path instead of dying."""
+    """Batch-embed via the ollama-client pool. Raises OllamaUnavailable on any error
+    so callers can fall back to the lexical path instead of dying. A missing model is
+    pulled once (client.ensure_model) and the embed retried."""
     if not texts:
         return []
-    base_url = (host or OLLAMA_URL).rstrip("/")
-    payload = json.dumps({"model": model, "input": texts}).encode()
-    req = urllib.request.Request(
-        f"{base_url}/api/embed",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
+    client = _client(host)
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        if "not found" in body.lower():
-            print(f"Model '{model}' missing. Pulling now (this may take a minute)...", file=sys.stderr)
-            import os
-            env = os.environ.copy()
-            env["OLLAMA_HOST"] = OLLAMA_URL
-            try:
-                subprocess.run(["ollama", "pull", model], env=env, check=True)
-            except (subprocess.SubprocessError, OSError) as pull_err:
-                # Typo'd model, registry unreachable, no ollama CLI, disk full —
-                # keep the documented clean-error/lexical-fallback contract.
-                raise OllamaUnavailable(f"ollama pull '{model}' failed: {pull_err}") from pull_err
-            # Retry once
-            try:
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    data = json.loads(resp.read())
-            except Exception as retry_err:
-                raise OllamaUnavailable(f"ollama embed failed after pull: {retry_err}") from retry_err
-        else:
-            raise OllamaUnavailable(f"ollama embed failed HTTP {e.code}: {body}") from e
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
-        raise OllamaUnavailable(f"ollama embed failed ({e})") from e
-    
-    embs = data.get("embeddings") if isinstance(data, dict) else None
-    if not isinstance(embs, list) or len(embs) != len(texts):
-        # A count mismatch would silently misalign unit<->vector pairing in
-        # every caller (zip truncation / positional indexing) — always raise
-        # so callers hit their documented lexical-fallback path instead.
-        got = len(embs) if isinstance(embs, list) else 0
-        raise OllamaUnavailable(f"ollama returned {got} embeddings for {len(texts)} inputs")
-    return embs
+        return client.embed(texts, model=model)
+    except OllamaUnavailable as first:
+        # Model not pulled on the host(s)? The library reports other 4xx as host-dropped
+        # failures; only try a pull when a host is reachable but lacks the model.
+        if not client.available() or _has_model(client, model):
+            raise
+        print(f"Model '{model}' missing. Pulling now (this may take a minute)...", file=sys.stderr)
+        try:
+            client.ensure_model(model)
+        except OllamaUnavailable as pull_err:
+            raise OllamaUnavailable(f"ollama pull '{model}' failed: {pull_err}") from pull_err
+        try:
+            return client.embed(texts, model=model)
+        except OllamaUnavailable as retry_err:
+            raise OllamaUnavailable(f"ollama embed failed after pull: {retry_err}") from first
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return dot / (na * nb) if na and nb else 0.0
+def _has_model(client, model: str) -> bool:
+    try:
+        have = client.list_models()
+    except OllamaUnavailable:
+        return True  # cannot tell; do not attempt a pull
+    want = model if ":" in model else f"{model}:latest"
+    return any(h == model or h == want for h in have)
 
 
 def _index_path(name: str) -> Path:
@@ -1233,21 +1237,20 @@ def cmd_bulk(args) -> int:
             print(f"Embedding {len(texts_to_embed)} representatives...")
             
             # Chunk embeddings to avoid Ollama timeouts on massive lists.
-            # Chunks round-robin across every host in OLLAMA_URLS (set via
-            # OLLAMA_HOSTS, comma-separated) and run concurrently -- a single
-            # host serializes every chunk behind its `-np 1` concurrency, so
-            # spreading across N hosts cuts wall time roughly Nx.
+            # Chunks run concurrently (one worker per host in OLLAMA_URLS, set via
+            # OLLAMA_HOSTS) and the ollama-client pool spreads them over the hosts
+            # with failover -- a single host serializes every chunk behind its
+            # `-np 1` concurrency, so spreading across N hosts cuts wall time ~Nx.
             chunk_size = 100
             chunks = [texts_to_embed[i:i + chunk_size] for i in range(0, len(texts_to_embed), chunk_size)]
             results: list[list[list[float]] | None] = [None] * len(chunks)
 
             def _embed_one(idx: int, chunk: list[str]) -> None:
-                host = OLLAMA_URLS[idx % len(OLLAMA_URLS)]
                 try:
-                    embs = _ollama_embed(chunk, args.model, host=host)
+                    embs = _ollama_embed(chunk, args.model)
                     results[idx] = embs if embs else [None] * len(chunk)
                 except Exception as e:
-                    print(f"WARN: Embedding chunk {idx} on {host} failed ({e}), skipping chunk.", file=sys.stderr)
+                    print(f"WARN: Embedding chunk {idx} failed ({e}), skipping chunk.", file=sys.stderr)
                     results[idx] = [None] * len(chunk)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(OLLAMA_URLS))) as ex:
