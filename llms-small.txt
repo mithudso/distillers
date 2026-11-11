@@ -1,15 +1,14 @@
-<!-- Generated 2026-09-25 [gen: p/2.0.0]; verified-as-of 2026-09-25 -->
+# distillers quick reference
 
-# distillers (small)
+distillers is an offline Python document-distillation engine. The stdlib core parses fixed web-text-mirror banners, extracts source-anchored units, renders Markdown and JSON, and deduplicates text. Optional ollama-client supplies embeddings.
 
-> Offline document-distillation engine, the zero-LLM-token half of a docs-to-skill pipeline. distill_offline.py (stdlib-only Python) mechanically reduces large text corpora, especially web-text-mirror docset mirrors, by splitting, extracting, deduplicating, rendering, indexing and novelty filtering.
+Start with docs/wiki/README.md, docs/DEVELOPMENT.md and docs/TESTING.md.
 
-## Essentials
+Verify:
+python3 -m py_compile distill_offline.py
+python3 -m unittest discover -s tests -v
+python3 scripts/generate_repo_docs.py --check
 
-- Script: python3 distill_offline.py <subcommand>
-- Subcommands: mirror, bulk, render, diff, merge, index, novelty, fetch, clean, extract
-- Env: OLLAMA_HOST, DISTILL_EMBED_MODEL (default mxbai-embed-large)
-- Verify: python3 -m py_compile distill_offline.py
-- Every Ollama path degrades to lexical (difflib) matching
-
-See llms.txt for the index and llms-facts.txt for sourced facts.
+Core: distill_offline.py. Frozen: split_master.py, categorize_topics.py, clean_*.py.
+Configuration: OLLAMA_HOST, OLLAMA_HOSTS, DISTILL_EMBED_MODEL. Default host is localhost:11434.
+Keep mirror page source_anchor values intact. Use --no-semantic for offline bulk.

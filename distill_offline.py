@@ -33,22 +33,28 @@ Subcommands:
   novelty  candidate units JSON -> drop candidates already covered by indexes
   clean    local HTML/text file -> page text only (tags/CSS/JS stripped)
 
-All modes are stdlib-only. Read the skill for how the LLM pass hands off here.
+Lexical modes use only the stdlib. Semantic modes use the optional shared
+ollama-client library. Read the skill for how the LLM pass hands off here.
 """
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures
+from contextlib import contextmanager
 import datetime as _dt
 import difflib
 import html
+import hashlib
 import json
 import math
 import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from html.parser import HTMLParser
@@ -114,6 +120,46 @@ def _slugify(text: str) -> str:
     return text[:80] or "distillation"
 
 
+def _safe_filename_part(value: str, field: str) -> str:
+    """Reject path syntax in values used to construct output filenames."""
+    if (not isinstance(value, str) or not value or value in (".", "..")
+            or "/" in value or "\\" in value or "\x00" in value):
+        raise ValueError(f"{field} must be a nonempty filename component")
+    return value
+
+
+@contextmanager
+def _atomic_text_writer(path: Path):
+    """Replace one artifact only after its complete UTF-8 contents are written."""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", delete=False) as out:
+            tmp_path = Path(out.name)
+            yield out
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    with _atomic_text_writer(path) as out:
+        out.write(text)
+
+
+def _atomic_write_json(path: Path, data: dict | list) -> None:
+    with _atomic_text_writer(path) as out:
+        json.dump(data, out, indent=2, ensure_ascii=False)
+        out.write("\n")
+
+
+def _unit_anchors(unit: dict) -> list[str]:
+    """Return every retained source anchor, in stable first-seen order."""
+    return list(dict.fromkeys(a for a in [unit.get("source_anchor"),
+                                        *(unit.get("source_anchors") or [])] if a))
+
+
 # --------------------------------------------------------------------------- #
 # render — the emit phase (the main token win: model never writes markdown)
 # --------------------------------------------------------------------------- #
@@ -123,18 +169,18 @@ def _unit_salience(u: dict) -> int:
 
 
 def _render_unit_line(u: dict) -> str:
-    t = u["type"]
+    t = u.get("type", "statement")
     text = u.get("text", "").strip()
-    anchor = u.get("source_anchor", "")
+    anchors = _unit_anchors(u)
     sal = (u.get("salience") or "").lower()
-    anchor_md = f"_{anchor}_" if anchor else ""
+    anchor_md = ", ".join(f"_{anchor}_" for anchor in anchors)
 
     if t == "quote":
         attr = u.get("attribution")
         q = f'> "{text}"'
         if attr:
             q += f" — {attr}"
-        if anchor:
+        if anchors:
             q += f", {anchor_md}"
         if sal == "high":
             q += " · salience: high"
@@ -150,7 +196,7 @@ def _render_unit_line(u: dict) -> str:
     else:
         line = f"- {text}"
 
-    if anchor:
+    if anchors:
         line = f"{line} — {anchor_md}"
     # Salience shown for concepts (matches the original's convention) and any
     # explicitly-high unit, to keep the list scannable; omitted otherwise.
@@ -202,9 +248,9 @@ def render_markdown(data: dict) -> str:
         lines.append("## Removed")
         lines.append("")
         for u in removed:
-            anchor = u.get("source_anchor", "")
+            anchors = _unit_anchors(u)
             when = u.get("removed_on") or generated
-            anchor_md = f" — _{anchor}_" if anchor else ""
+            anchor_md = " — " + ", ".join(f"_{anchor}_" for anchor in anchors) if anchors else ""
             lines.append(f"- {u.get('text','').strip()}{anchor_md} · removed {when}")
         lines.append("")
 
@@ -223,14 +269,17 @@ def render_markdown(data: dict) -> str:
 
 def _write_pair(stem_dir: Path, slug: str, generated: str, data: dict,
                 json_only: bool) -> list[str]:
+    _safe_filename_part(slug, "slug")
+    _safe_filename_part(generated, "generated")
+    markdown = None if json_only else render_markdown(data)
     stem_dir.mkdir(parents=True, exist_ok=True)
     written = []
     json_path = stem_dir / f"{slug}-{generated}.json"
-    json_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    _atomic_write_json(json_path, data)
     written.append(str(json_path))
     if not json_only:
         md_path = stem_dir / f"{slug}-{generated}.md"
-        md_path.write_text(render_markdown(data))
+        _atomic_write_text(md_path, markdown)
         written.append(str(md_path))
     return written
 
@@ -350,6 +399,7 @@ def cmd_merge(args) -> int:
         try:
             sem_targets = _ollama_embed([u.get("text", "") for u in targets], args.model)
             sem_cands = _ollama_embed([nu.get("text", "") for nu in new_units], args.model)
+            _validate_vectors(sem_targets + sem_cands, len(targets) + len(new_units))
         except OllamaUnavailable as e:
             print(f"WARN {e}; semantic dedup off, using lexical.", file=sys.stderr)
             sem_targets = sem_cands = None
@@ -360,7 +410,7 @@ def cmd_merge(args) -> int:
     today = _today()
     for ci, nu in enumerate(new_units):
         ntext = _norm(nu.get("text", ""))
-        best, best_ratio = None, 0.0
+        best, best_ratio = None, -math.inf
         for ti, (u, tn) in enumerate(target_norms):
             if sem_targets is not None:
                 r = _cosine(sem_cands[ci], sem_targets[ti])
@@ -378,6 +428,10 @@ def cmd_merge(args) -> int:
             # Folded units never consume an id from the kept-unit counter —
             # consecutive folds used to log the SAME placeholder id.
             best.setdefault("duplicates", []).append(nu.get("id") or f"new-{ci:03d}")
+            anchors = list(dict.fromkeys(_unit_anchors(best) + _unit_anchors(nu)))
+            if anchors:
+                best.setdefault("source_anchor", anchors[0])
+                best["source_anchors"] = anchors
             folded += 1
         else:
             uid = f"u{nid:03d}"
@@ -407,33 +461,39 @@ class _TextExtractor(HTMLParser):
     # Tags that imply a line/paragraph break in the extracted text.
     _BREAK = {"p", "br", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6",
               "tr", "section", "article", "header", "blockquote", "pre"}
+    _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+             "link", "meta", "param", "source", "track", "wbr"}
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
-        self._skip_depth = 0
+        self._skip_tags: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         if tag in self._SKIP:
-            self._skip_depth += 1
-        elif tag in self._BREAK:
+            if tag not in self._VOID:
+                self._skip_tags.append(tag)
+        elif not self._skip_tags and tag in self._BREAK:
             self.parts.append("\n")
 
     def handle_startendtag(self, tag, attrs):
-        if tag in self._BREAK:
-            self.parts.append("\n")
+        self.handle_starttag(tag, attrs)
+        if tag not in self._VOID:
+            self.handle_endtag(tag)
 
     def handle_endtag(self, tag):
-        if tag in self._SKIP and self._skip_depth:
-            self._skip_depth -= 1
+        if tag in self._skip_tags:
+            index = len(self._skip_tags) - 1 - self._skip_tags[::-1].index(tag)
+            del self._skip_tags[index:]
+        elif not self._skip_tags and tag in self._BREAK:
+            self.parts.append("\n")
 
     def handle_data(self, data):
-        if self._skip_depth == 0 and data.strip():
+        if not self._skip_tags:
             self.parts.append(data)
 
     def text(self) -> str:
         raw = "".join(self.parts)
-        raw = html.unescape(raw)
         raw = re.sub(r"[ \t]+", " ", raw)
         raw = re.sub(r"\n[ \t]+", "\n", raw)
         raw = re.sub(r"\n{3,}", "\n\n", raw)
@@ -466,13 +526,7 @@ def _looks_like_html(text: str, path: str | None = None) -> bool:
 
 
 def _html_to_text(body: str) -> str:
-    """Strip all tags/CSS/JS and return only the page text using trafilatura."""
-    import trafilatura
-    # Try high-recall extraction first
-    res = trafilatura.extract(body, favor_recall=True, include_comments=True)
-    if res:
-        return res
-    # Fallback if trafilatura finds no main content
+    """Extract visible page text with the stdlib, without optional dependencies."""
     parser = _TextExtractor()
     parser.feed(body)
     parser.close()
@@ -483,14 +537,23 @@ def cmd_fetch(args) -> int:
     if not re.match(r"^https?://", args.url):
         print("ERROR fetch: only http(s) URLs are allowed", file=sys.stderr)
         return 2
+    if args.timeout <= 0:
+        print("ERROR fetch: --timeout must be positive", file=sys.stderr)
+        return 2
     try:
         out = subprocess.run(
             # --proto pins curl to http(s) even on redirects (no file:// etc.)
             ["curl", "-fsSL", "--proto", "=http,https", "--max-time", str(args.timeout), args.url],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, timeout=args.timeout + 5,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"ERROR fetch failed: {e}", file=sys.stderr)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR fetch failed: curl exited with status {e.returncode}", file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired:
+        print("ERROR fetch failed: request timed out", file=sys.stderr)
+        return 2
+    except FileNotFoundError:
+        print("ERROR fetch failed: curl is not installed", file=sys.stderr)
         return 2
     body = out.stdout
     if _looks_like_html(body):
@@ -616,6 +679,7 @@ def cmd_extract(args) -> int:
 _MIRROR_BANNER_RE = re.compile(r"^={10,}\s*$")
 _MIRROR_URL_RE = re.compile(r"^URL:\s*(https?://\S+)\s*$")
 _MIRROR_PAGE_FILE_RE = re.compile(r"^\d+_")  # files written by split_mirror_to_dir
+_MIRROR_OWNED_FILE_RE = re.compile(r"\d+_[\w-]+\.md\Z")
 
 
 def parse_mirror(text: str) -> list[dict] | None:
@@ -674,18 +738,23 @@ def split_mirror_to_dir(text: str, out_dir: Path) -> int:
     pages = parse_mirror(text)
     if not pages:
         raise ValueError("input is not a web-text-mirror docset (no URL banners found)")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if out_dir.is_symlink():
+        raise ValueError("mirror output directory must not be a symlink")
     # Clear stale page files from a previous split (a shrunk/reordered mirror
     # would otherwise contaminate a later bulk run) — but only files THIS tool
     # wrote, tracked in a manifest. Numbered .md files are a common personal
     # note convention; never delete files we can't prove are ours.
     manifest_path = out_dir / ".mirror_split_manifest.json"
     ours = set()
+    if manifest_path.is_symlink():
+        raise ValueError("mirror split manifest must not be a symlink")
     if manifest_path.exists():
-        try:
-            ours = set(json.loads(manifest_path.read_text()))
-        except (OSError, json.JSONDecodeError):
-            ours = set()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (not isinstance(manifest, list)
+                or any(not isinstance(name, str) or not _MIRROR_OWNED_FILE_RE.fullmatch(name)
+                       for name in manifest)):
+            raise ValueError("mirror split manifest must list generated page basenames only")
+        ours = set(manifest)
     strays = [p.name for p in out_dir.glob("*.md")
               if _MIRROR_PAGE_FILE_RE.match(p.name) and p.name not in ours]
     if strays:
@@ -693,16 +762,21 @@ def split_mirror_to_dir(text: str, out_dir: Path) -> int:
             f"{out_dir} already contains {len(strays)} numbered .md file(s) not "
             f"written by a previous split (e.g. {strays[0]!r}) — refusing to "
             "overwrite them; use an empty/dedicated --split-dir")
-    for name in ours:
-        stale = out_dir / name
-        if stale.exists():
-            stale.unlink()
+    planned = [(f"{n:03d}_{_page_slug(pg['url'])}.md", pg)
+               for n, pg in enumerate(pages, start=1)]
+    for name in ours | {name for name, _ in planned}:
+        path = out_dir / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("mirror page targets must be regular files, not symlinks or directories")
+    out_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    for n, pg in enumerate(pages, start=1):
-        fname = f"{n:03d}_{_page_slug(pg['url'])}.md"
-        (out_dir / fname).write_text(f"URL: {pg['url']}\n\n{pg['text']}\n")
+    for fname, pg in planned:
+        _atomic_write_text(out_dir / fname, f"URL: {pg['url']}\n\n{pg['text']}\n")
         written.append(fname)
-    manifest_path.write_text(json.dumps(written, indent=0))
+    for name in ours:
+        if name not in written:
+            (out_dir / name).unlink(missing_ok=True)
+    _atomic_write_json(manifest_path, written)
     return len(pages)
 
 
@@ -783,29 +857,54 @@ def _client(host: str | None = None, workers: int = 1):
     return _CLIENT
 
 
+def _validate_vectors(vectors, count: int, dimension: int | None = None) -> list[list[float]]:
+    """Fail closed on partial, nonnumeric or incompatible embedding batches."""
+    if not isinstance(vectors, list) or len(vectors) != count:
+        raise OllamaUnavailable("embedding response count does not match input count")
+    for vector in vectors:
+        if not isinstance(vector, list) or not vector:
+            raise OllamaUnavailable("embedding response contains an empty or invalid vector")
+        if dimension is None:
+            dimension = len(vector)
+        if len(vector) != dimension:
+            raise OllamaUnavailable("embedding response contains incompatible vector dimensions")
+        try:
+            valid_numbers = all(not isinstance(value, bool) and isinstance(value, (int, float))
+                                and math.isfinite(value) for value in vector)
+            valid_magnitude = valid_numbers and math.isfinite(sum(value * value for value in vector))
+        except (OverflowError, ValueError, TypeError):
+            valid_magnitude = False
+        if not valid_magnitude:
+            raise OllamaUnavailable("embedding response contains non-finite or nonnumeric values")
+    return vectors
+
+
 def _ollama_embed(texts: list[str], model: str, host: str | None = None) -> list[list[float]]:
-    """Batch-embed via the ollama-client pool. Raises OllamaUnavailable on any error
-    so callers can fall back to the lexical path instead of dying. A missing model is
-    pulled once (client.ensure_model) and the embed retried."""
+    """Batch-embed with validated alignment; translate failures for lexical fallback."""
     if not texts:
         return []
-    client = _client(host)
     try:
-        return client.embed(texts, model=model)
-    except OllamaUnavailable as first:
-        # Model not pulled on the host(s)? The library reports other 4xx as host-dropped
-        # failures; only try a pull when a host is reachable but lacks the model.
-        if not client.available() or _has_model(client, model):
-            raise
-        print(f"Model '{model}' missing. Pulling now (this may take a minute)...", file=sys.stderr)
+        client = _client(host)
         try:
-            client.ensure_model(model)
-        except OllamaUnavailable as pull_err:
-            raise OllamaUnavailable(f"ollama pull '{model}' failed: {pull_err}") from pull_err
-        try:
-            return client.embed(texts, model=model)
-        except OllamaUnavailable as retry_err:
-            raise OllamaUnavailable(f"ollama embed failed after pull: {retry_err}") from first
+            vectors = client.embed(texts, model=model)
+        except OllamaUnavailable as first:
+            # Pull only when a reachable host lacks the requested model.
+            if not client.available() or _has_model(client, model):
+                raise
+            print(f"Model '{model}' missing. Pulling now (this may take a minute)...", file=sys.stderr)
+            try:
+                client.ensure_model(model)
+            except OllamaUnavailable as pull_err:
+                raise OllamaUnavailable(f"ollama pull '{model}' failed: {pull_err}") from pull_err
+            try:
+                vectors = client.embed(texts, model=model)
+            except OllamaUnavailable as retry_err:
+                raise OllamaUnavailable(f"ollama embed failed after pull: {retry_err}") from first
+        return _validate_vectors(vectors, len(texts))
+    except OllamaUnavailable:
+        raise
+    except Exception as error:
+        raise OllamaUnavailable("embedding request failed") from error
 
 
 def _has_model(client, model: str) -> bool:
@@ -833,20 +932,22 @@ def cmd_index(args) -> int:
     texts = [u["text"] for u in units]
     try:
         vectors = _ollama_embed(texts, args.model)
+        _validate_vectors(vectors, len(units))
     except OllamaUnavailable as e:
         print(f"ERROR {e}; index needs ollama running.", file=sys.stderr)
         return 2
 
     entries = [
         {"id": u.get("id"), "text": u["text"], "type": u.get("type"),
-         "source": src.get("ref"), "vector": v}
+         "source": src.get("ref") or src.get("url") or src.get("path"),
+         "source_anchor": u.get("source_anchor"),
+         "source_anchors": _unit_anchors(u), "vector": v}
         for u, v in zip(units, vectors)
     ]
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     path = _index_path(name)
-    path.write_text(json.dumps(
-        {"model": args.model, "generated": _today(), "entries": entries},
-        ensure_ascii=False))
+    _atomic_write_json(path, {"model": args.model, "source": src,
+                             "generated": _today(), "entries": entries})
     print(json.dumps({"index": str(path), "vectors": len(entries),
                       "model": args.model}, indent=2))
     return 0
@@ -859,9 +960,14 @@ def _load_indexes(names: list[str] | None) -> list[dict]:
         paths = sorted(INDEX_DIR.glob("*.json")) if INDEX_DIR.exists() else []
     out = []
     for p in paths:
-        if p.exists():
-            out.extend(json.loads(p.read_text()).get("entries", []))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        out.extend(dict(entry, _index_model=data.get("model"))
+                   for entry in data.get("entries", []))
     return out
+
+
+def _model_identity(model: str | None) -> str | None:
+    return model.removesuffix(":latest") if isinstance(model, str) else None
 
 
 def cmd_novelty(args) -> int:
@@ -886,17 +992,23 @@ def cmd_novelty(args) -> int:
         return 0
 
     index_texts = [e["text"] for e in index]
+    index_norms = [_norm(text) for text in index_texts]
     semantic = True
     try:
+        if any(_model_identity(e.get("_index_model")) != _model_identity(args.model)
+               for e in index):
+            raise OllamaUnavailable("prior index uses an incompatible or unknown embedding model")
         cand_vecs = _ollama_embed(cand_texts, args.model)
-        idx_vecs = [e["vector"] for e in index]
+        _validate_vectors(cand_vecs, len(cand))
+        idx_vecs = [e.get("vector") for e in index]
+        _validate_vectors(idx_vecs, len(index), len(cand_vecs[0]) if cand_vecs else None)
     except OllamaUnavailable as e:
         print(f"WARN {e}; falling back to lexical novelty.", file=sys.stderr)
         semantic = False
 
     novel, matched = [], []
     for i, c in enumerate(cand):
-        best_sim, best_j = 0.0, -1
+        best_sim, best_j = -math.inf, -1
         if semantic:
             for j, iv in enumerate(idx_vecs):
                 s = _cosine(cand_vecs[i], iv)
@@ -904,8 +1016,8 @@ def cmd_novelty(args) -> int:
                     best_sim, best_j = s, j
         else:
             ci_norm = _norm(cand_texts[i])
-            for j, it in enumerate(index_texts):
-                sm = difflib.SequenceMatcher(a=ci_norm, b=_norm(it), autojunk=False)
+            for j, it in enumerate(index_norms):
+                sm = difflib.SequenceMatcher(a=ci_norm, b=it, autojunk=False)
                 # Upper-bound prune: a sub-threshold pair can never count as
                 # matched, so skipping it cannot change the novel/matched split.
                 if sm.real_quick_ratio() < args.threshold:
@@ -913,10 +1025,15 @@ def cmd_novelty(args) -> int:
                 s = sm.ratio()
                 if s > best_sim:
                     best_sim, best_j = s, j
-        if best_sim >= args.threshold:
+        if best_j >= 0 and best_sim >= args.threshold:
             matched.append({"candidate": c.get("text"), "similarity": round(best_sim, 3),
                             "matched_id": index[best_j].get("id"),
-                            "matched_text": index[best_j].get("text")})
+                            "matched_text": index[best_j].get("text"),
+                            "source": index[best_j].get("source"),
+                            "source_anchor": index[best_j].get("source_anchor"),
+                            "source_anchors": _unit_anchors(index[best_j]),
+                            "candidate_source_anchor": c.get("source_anchor"),
+                            "candidate_source_anchors": _unit_anchors(c)})
         else:
             novel.append(c)
 
@@ -931,21 +1048,6 @@ def cmd_novelty(args) -> int:
 
 # --------------------------------------------------------------------------- #
 # plumbing
-import os
-import sys
-import json
-import re
-import argparse
-import urllib.request
-import urllib.error
-import html
-import unicodedata
-import hashlib
-import math
-import subprocess
-import difflib
-from pathlib import Path
-from html.parser import HTMLParser
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -979,16 +1081,13 @@ _FILLER_PATTERNS = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in (
 )]
 
 
-def clean_and_split(raw):
-    if '<html' in raw.lower() or '<body' in raw.lower() or '<div' in raw.lower():
-        raw = _html_to_text(raw)
-    
-    raw = html.unescape(raw)
+def clean_and_split(raw, *, html_cleaned=False):
+    if not html_cleaned:
+        raw = _html_to_text(raw) if _looks_like_html(raw) else html.unescape(raw)
     raw = re.sub(r'http[s]?://\S+', '', raw)
     raw = re.sub(r'^(?:hi|hello|hey|welcome|dear|greetings|sincerely|best regards|cheers|thanks|thank you)\b.*$', '', raw, flags=re.IGNORECASE | re.MULTILINE)
     
-    # Flatten punctuation and newlines BEFORE applying fillers
-    raw = re.sub(r'[^\w\s.,;:!?()-]', ' ', raw)
+    # Keep punctuation: decimal points and operators carry source meaning.
     raw = raw.replace('\n', ' ')
     raw = re.sub(r'[ \t]+', ' ', raw)
     
@@ -1014,8 +1113,7 @@ def precompute_magnitude(vec):
     return math.sqrt(sum(a * a for a in vec))
 
 def get_canonical(text):
-    text = unicodedata.normalize("NFKC", text).lower()
-    text = re.sub(r'[^\w\s]', '', text)
+    text = unicodedata.normalize("NFC", text).lower()
     return re.sub(r'\s+', ' ', text).strip()
 
 def compute_jaccard(set_a, set_b):
@@ -1038,290 +1136,353 @@ def _shard_index_path(target_dir: Path, base_name: str, shard_index: int) -> Pat
     return target_dir / f".{base_name}_distill_index.shard{shard_index}.json"
 
 
+_BULK_CACHE_VERSION = 2
+
+
+def _bulk_fingerprints(files: list[Path]) -> dict[str, str]:
+    fingerprints = {}
+    for path in files:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        fingerprints[str(path)] = digest.hexdigest()
+    return fingerprints
+
+
+def _new_bulk_index(fingerprints: dict[str, str], fast_clean: bool) -> dict:
+    return {"cache_version": _BULK_CACHE_VERSION,
+            "input_fingerprints": fingerprints,
+            "settings": {"fast_clean": fast_clean},
+            "files_processed": [], "unique_units": {}}
+
+
+def _valid_bulk_index(index) -> bool:
+    """Treat corrupt or older checkpoints as invalid, before using their units."""
+    if (not isinstance(index, dict) or index.get("cache_version") != _BULK_CACHE_VERSION
+            or not isinstance(index.get("input_fingerprints"), dict)
+            or not isinstance(index.get("files_processed"), list)
+            or not isinstance(index.get("unique_units"), dict)
+            or not isinstance(index.get("settings"), dict)
+            or set(index["settings"]) != {"fast_clean"}
+            or not isinstance(index["settings"]["fast_clean"], bool)):
+        return False
+    if (any(not isinstance(path, str) or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            for path, digest in index["input_fingerprints"].items())
+            or any(not isinstance(path, str) for path in index["files_processed"])
+            or len(set(index["files_processed"])) != len(index["files_processed"])
+            or not set(index["files_processed"]).issubset(index["input_fingerprints"])):
+        return False
+    for unit in index["unique_units"].values():
+        if (not isinstance(unit, dict) or not isinstance(unit.get("text"), str)
+                or isinstance(unit.get("count"), bool) or not isinstance(unit.get("count"), int)
+                or unit["count"] < 1 or unit.get("cat") not in ("Actionables", "Questions", "Statements")
+                or not isinstance(unit.get("source_anchor"), str)
+                or not isinstance(unit.get("sources"), list)
+                or any(not isinstance(source, str) for source in unit["sources"])
+                or not isinstance(unit.get("source_anchors"), list)
+                or any(not isinstance(anchor, str) for anchor in unit["source_anchors"])):
+            return False
+    return True
+
+
+def _bulk_cache_matches(index: dict, fingerprints: dict[str, str], fast_clean: bool) -> bool:
+    return (_valid_bulk_index(index)
+            and index.get("input_fingerprints") == fingerprints
+            and index.get("settings") == {"fast_clean": fast_clean})
+
+
+def _bulk_extract(raw: str, path: Path, fast_clean: bool) -> list[tuple[str, str]]:
+    """Extract statements with page-local anchors, including already-split pages."""
+    pages = parse_mirror(raw)
+    if not pages:
+        lines = raw.splitlines()
+        match = _MIRROR_URL_RE.fullmatch(lines[0]) if lines else None
+        if match:
+            # split_mirror_to_dir adds a URL header and one blank line.
+            first_body = 2 if len(lines) > 1 and not lines[1].strip() else 1
+            pages = [{"url": match.group(1), "text": "\n".join(lines[first_body:])}]
+        else:
+            pages = [{"url": str(path), "text": raw}]
+    extracted = []
+    for page in pages:
+        body = page["text"]
+        html_cleaned = fast_clean and _looks_like_html(body)
+        if html_cleaned:
+            body = _html_to_text(body)
+        for line_number, line in enumerate(body.splitlines(), start=1):
+            statements = clean_and_split(line, html_cleaned=html_cleaned) if fast_clean else [line.strip()]
+            for statement in statements:
+                if len(statement) > 20 and get_canonical(statement):
+                    extracted.append((statement, f"{page['url']}#L{line_number}"))
+    return extracted
+
+
 def _merge_shard_indexes(target_dir: Path, base_name: str, shard_count: int) -> dict:
-    """Associative merge of N shards' {hash: unit} maps -- safe because Stage 1
-    is embarrassingly parallel (each file's lines hash independently); only
-    Stage 3's semantic clustering needs the FULL merged unique-unit list, so
-    it still runs once, here, after every shard's Stage 1 is in."""
-    merged = {"files_processed": [], "unique_units": {}}
-    seen_files = set()
+    """Load and validate every shard before assembling a complete aggregate."""
+    shards = []
     for i in range(shard_count):
         shard_path = _shard_index_path(target_dir, base_name, i)
-        if not shard_path.exists():
-            print(f"WARN: shard {i} index missing ({shard_path}), merging without it", file=sys.stderr)
-            continue
-        with open(shard_path) as f:
-            shard = json.load(f)
-        for h, unit in shard.get("unique_units", {}).items():
-            if h in merged["unique_units"]:
-                existing = merged["unique_units"][h]
+        if not shard_path.is_file():
+            raise ValueError(f"shard {i} index is missing; finish every shard before merging")
+        shard = json.loads(shard_path.read_text(encoding="utf-8"))
+        if (not _valid_bulk_index(shard)
+                or set(shard["files_processed"]) != set(shard["input_fingerprints"])):
+            raise ValueError(f"shard {i} index is incomplete or incompatible; rerun that shard")
+        if shards and shard.get("settings") != shards[0].get("settings"):
+            raise ValueError("shard indexes use different cleaning settings")
+        shards.append(shard)
+    merged = _new_bulk_index({}, shards[0]["settings"]["fast_clean"])
+    for shard in shards:
+        if set(merged["input_fingerprints"]) & set(shard["input_fingerprints"]):
+            raise ValueError("shard indexes contain overlapping input files")
+        merged["input_fingerprints"].update(shard["input_fingerprints"])
+        merged["files_processed"].extend(shard["files_processed"])
+        for digest, unit in shard["unique_units"].items():
+            if digest in merged["unique_units"]:
+                existing = merged["unique_units"][digest]
                 existing["count"] += unit["count"]
-                existing["sources"] = list(set(existing["sources"]) | set(unit["sources"]))
+                existing["sources"] = list(dict.fromkeys(existing["sources"] + unit["sources"]))
+                existing["source_anchors"] = list(dict.fromkeys(_unit_anchors(existing) + _unit_anchors(unit)))
             else:
-                merged["unique_units"][h] = unit
-        for fp in shard.get("files_processed", []):
-            if fp not in seen_files:
-                seen_files.add(fp)
-                merged["files_processed"].append(fp)
+                merged["unique_units"][digest] = unit
     return merged
 
 
+def _bulk_source_label(unit: dict) -> str:
+    anchors = _unit_anchors(unit)
+    return ", ".join(anchors) if anchors else ", ".join(unit.get("sources", []))
+
+
+@contextmanager
+def _bulk_preview_writer(path: Path, reset: bool, existing_units):
+    """Never follow preview symlinks or truncate a nonregular target."""
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("bulk preview must be a regular file, not a symlink or directory")
+    if not hasattr(os, "O_NOFOLLOW"):
+        # Platforms without a no-follow open rebuild the preview atomically from
+        # the checkpoint, rather than reading/appending through the target path.
+        with _atomic_text_writer(path) as out:
+            if not reset:
+                for unit in existing_units:
+                    out.write(f"- {unit['text']} _{unit['source_anchor']}_\n")
+            yield out
+        return
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("bulk preview must be a regular file")
+        if reset:
+            os.ftruncate(fd, 0)
+        out = os.fdopen(fd, "a", encoding="utf-8")
+        fd = None
+        with out:
+            yield out
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _is_owned_bulk_output(path: Path) -> bool:
+    """Recognize prior outputs without excluding user files by suffix alone."""
+    if path.name.endswith("_master.md"):
+        with path.open(encoding="utf-8", errors="replace") as source:
+            header = source.readline(256).rstrip("\r\n")
+        if header in {"# Semantic Distillation Master (3-Stage Funnel)",
+                      "# Bulk Distillation Master (2-Stage Lexical Funnel)"}:
+            return True
+    preview = re.fullmatch(r"(.+)_live_preview(?:\.shard(\d+))?\.md", path.name)
+    if preview:
+        base_name, shard = preview.groups()
+        cache = (_shard_index_path(path.parent, base_name, int(shard)) if shard is not None
+                 else path.parent / f".{base_name}_distill_index.json")
+        return cache.is_file() and not cache.is_symlink()
+    return False
+
+
 def cmd_bulk(args) -> int:
-    # Flags are real (BooleanOptionalAction, default ON) — use --no-semantic,
-    # --no-resume, --no-fast-clean, --no-recursive to opt out.
     if not (0.0 <= args.threshold <= 1.0):
         print(f"ERROR: --threshold must be in [0,1], got {args.threshold}", file=sys.stderr)
         return 2
-    if args.shard_count > 1 and not (0 <= args.shard_index < args.shard_count):
-        print(f"ERROR: --shard-index must be in [0,{args.shard_count})", file=sys.stderr)
+    if args.shard_count < 1 or not (0 <= args.shard_index < args.shard_count):
+        print("ERROR: --shard-count must be positive and --shard-index must be in range", file=sys.stderr)
         return 2
-
-    target_path = Path(args.dir)
+    if args.merge_shards and args.shard_count < 2:
+        print("ERROR: --merge-shards requires --shard-count greater than one", file=sys.stderr)
+        return 2
+    target_path = Path(args.dir).expanduser()
     if not target_path.exists():
         print(f"ERROR: Path {target_path} does not exist.", file=sys.stderr)
         return 2
-
-    if target_path.is_file():
-        raw = target_path.read_text(errors="ignore")
-        mirror_pages = parse_mirror(raw)
-        if mirror_pages:
-            # web-text-mirror docset: split per page first so unit sources
-            # carry per-page URL provenance instead of one giant blob.
-            pages_dir = target_path.parent / f"{target_path.stem}.pages"
-            n = split_mirror_to_dir(raw, pages_dir)
-            print(f"Mirror docset detected ({docset_key(mirror_pages, target_path)}): "
-                  f"split {n} pages into {pages_dir}", flush=True)
-            target_dir = pages_dir
-            base_name = target_path.stem
-            # Only the numbered page files — never bulk's own master/preview
-            # outputs from a previous run (they land in this same dir).
-            files = sorted(p for p in pages_dir.glob("*.md")
-                           if _MIRROR_PAGE_FILE_RE.match(p.name))
-        else:
-            target_dir = target_path.parent
-            base_name = target_path.stem
-            files = [target_path]
-    else:
-        target_dir = target_path
-        base_name = target_path.resolve().name
-        excluded = {".bulk_distill_index.json", "semantic_master.md", "master_distilled.md", "bulk_live_preview.md", "bulk_master.md", f".{base_name}_distill_index.json", f"{base_name}_master.md", f"{base_name}_live_preview.md"}
-        print(f"Scanning directory {target_dir}...", flush=True)
-        # Allow md, txt, and html files
-        exts = {".html", ".md", ".txt"}
-        walker = target_dir.rglob("*") if args.recursive else target_dir.glob("*")
-        files = [p for p in walker if p.is_file() and p.suffix in exts and p.name not in excluded and "Special_" not in p.name and "Special:" not in str(p)]
-
+    # This check must precede the split: even a rejected worker must not clear
+    # another worker's pages or create output artifacts.
     if args.shard_count > 1 and target_path.is_file():
-        # A raw mirror file triggers a destructive split (clears stale pages
-        # from a prior run) -- concurrent shards racing that would corrupt
-        # each other's output. Sharding only ever targets an ALREADY-split
-        # pages dir (the dispatcher splits once, up front, then fans out).
-        print("ERROR: --shard-count on a single file would race the mirror "
-              "split across shards; pre-split with 'mirror --split-dir' "
-              "and shard over that directory instead.", file=sys.stderr)
+        print("ERROR: --shard-count on a single file would race the mirror split; "
+              "pre-split with 'mirror --split-dir' and shard the directory instead.", file=sys.stderr)
         return 2
 
-    if args.merge_shards:
-        print(f"Merging {args.shard_count} shard indexes for {base_name}...", flush=True)
-        index = _merge_shard_indexes(target_dir, base_name, args.shard_count)
-        index_file = target_dir / f".{base_name}_distill_index.json"
-        tmp_index = index_file.with_suffix('.json.tmp')
-        with open(tmp_index, 'w') as out:
-            json.dump(index, out)
-        os.replace(tmp_index, index_file)
-        print(f"Merged: {len(index['unique_units'])} unique units from "
-              f"{len(index['files_processed'])} files.", flush=True)
-        pending = []  # Stage 1 already done per-shard; fall through to Stage 3
-    else:
-        if args.shard_count > 1:
-            index_file = _shard_index_path(target_dir, base_name, args.shard_index)
-            files = [f for f in files if _shard_owns(f, args.shard_index, args.shard_count)]
+    if target_path.is_file():
+        raw = target_path.read_text(encoding="utf-8", errors="replace")
+        mirror_pages = parse_mirror(raw)
+        base_name = target_path.stem
+        if mirror_pages:
+            target_dir = target_path.parent / f"{target_path.stem}.pages"
+            n = split_mirror_to_dir(raw, target_dir)
+            print(f"Mirror docset detected ({docset_key(mirror_pages, target_path)}): "
+                  f"split {n} pages into {target_dir}", flush=True)
+            files = sorted(p for p in target_dir.glob("*.md")
+                           if _MIRROR_PAGE_FILE_RE.match(p.name))
         else:
-            index_file = target_dir / f".{base_name}_distill_index.json"
-
-        index = {"files_processed": [], "unique_units": {}}
-        if args.resume and index_file.exists():
-            try:
-                with open(index_file) as f:
-                    index = json.load(f)
-            except Exception as e:
-                print(f"WARN: Could not load index ({e}), starting fresh.", file=sys.stderr)
-
-        index.setdefault("unique_units", {})
-        index.setdefault("files_processed", [])
-
-        pending = [f for f in files if str(f) not in index["files_processed"]]
-        print(f"Total files: {len(files)} | Processed: {len(index['files_processed'])} | Pending: {len(pending)}"
-              + (f" | shard {args.shard_index}/{args.shard_count}" if args.shard_count > 1 else ""))
-
-    preview_path = target_dir / f"{base_name}_live_preview.md"
-    
-    count = 0
-    save_interval = 50
-    
-    # STAGE 1: Exact Hash Funnel
-    preview_out = open(preview_path, "a")  # one handle for the run, not one per statement
-    try:
-        for f in pending:
-            count += 1
-            print(f"[{count}/{len(pending)}] Extracting: {f}", flush=True)
-            # Read + extract FULLY before touching the shared index, so a
-            # mid-file failure can't half-merge statements that a --resume
-            # rerun would then double-count.
-            try:
-                raw = f.read_text(errors='ignore')
-                if args.fast_clean:
-                    stmts = clean_and_split(raw)
-                else:
-                    stmts = [s.strip() for s in raw.splitlines() if len(s.strip()) > 20]
-                staged = [(hashlib.md5(get_canonical(s).encode()).hexdigest(), s) for s in stmts]
-            except Exception as e:
-                print(f"WARN reading {f} failed: {e}", file=sys.stderr)
-                continue
-
-            for h, s in staged:
-                if h in index["unique_units"]:
-                    index["unique_units"][h]["count"] += 1
-                    if str(f) not in index["unique_units"][h]["sources"]:
-                        index["unique_units"][h]["sources"].append(str(f))
-                else:
-                    index["unique_units"][h] = {
-                        "text": s,
-                        "count": 1,
-                        "sources": [str(f)],
-                        "cat": categorize(s)
-                    }
-                    preview_out.write(f"- {s} ({f.name})\n")
-
-            index["files_processed"].append(str(f))
-
-            if count % save_interval == 0:
-                preview_out.flush()
-                tmp_index = index_file.with_suffix('.json.tmp')
-                with open(tmp_index, 'w') as out: json.dump(index, out)
-                os.replace(tmp_index, index_file)
-    finally:
-        preview_out.close()
-            
-    tmp_index = index_file.with_suffix('.json.tmp')
-    with open(tmp_index, 'w') as out: json.dump(index, out)
-    os.replace(tmp_index, index_file)
-
-    unique_list = list(index["unique_units"].values())
-    print(f"\nStage 1 Complete: {len(unique_list)} exact-unique units.")
+            target_dir, files = target_path.parent, [target_path]
+    else:
+        target_dir, base_name = target_path, target_path.resolve().name
+        excluded = {f"{base_name}_master.md", f"{base_name}_live_preview.md"}
+        print(f"Scanning directory {target_dir}...", flush=True)
+        walker = target_dir.rglob("*") if args.recursive else target_dir.glob("*")
+        files = sorted(p for p in walker if p.is_file() and p.suffix in {".html", ".md", ".txt"}
+                       and p.name not in excluded
+                       and not _is_owned_bulk_output(p)
+                       and "Special_" not in p.name and "Special:" not in str(p))
 
     if args.shard_count > 1 and not args.merge_shards:
-        # This shard's slice of Stage 1 is done. Semantic clustering needs
-        # every shard's units in one place -- run '--merge-shards' once, after
-        # every shard here has finished, to do Stage 2/3 on the combined set.
-        print(f"Shard {args.shard_index}/{args.shard_count} done -- "
-              f"run --merge-shards once all shards finish.", flush=True)
+        files = [path for path in files if _shard_owns(path.relative_to(target_dir),
+                                                    args.shard_index, args.shard_count)]
+    fingerprints = _bulk_fingerprints(files)
+    index_file = (_shard_index_path(target_dir, base_name, args.shard_index)
+                  if args.shard_count > 1 and not args.merge_shards
+                  else target_dir / f".{base_name}_distill_index.json")
+    reset = True
+    if args.merge_shards:
+        index = _merge_shard_indexes(target_dir, base_name, args.shard_count)
+        if not _bulk_cache_matches(index, fingerprints, args.fast_clean):
+            raise ValueError("shard inputs or cleaning settings changed; rerun every shard before merging")
+        pending = []
+        print(f"Merged: {len(index['unique_units'])} unique units from {len(index['files_processed'])} files.")
+    else:
+        index = _new_bulk_index(fingerprints, args.fast_clean)
+        if args.resume and index_file.exists():
+            try:
+                candidate = json.loads(index_file.read_text(encoding="utf-8"))
+                if _bulk_cache_matches(candidate, fingerprints, args.fast_clean):
+                    index, reset = candidate, False
+                else:
+                    print("WARN: bulk inputs, cleaning settings or cache format changed; rebuilding cache.", file=sys.stderr)
+            except (OSError, ValueError, TypeError):
+                print("WARN: bulk cache is unreadable or invalid; rebuilding cache.", file=sys.stderr)
+        processed = set(index["files_processed"])
+        pending = [path for path in files if str(path) not in processed]
+        print(f"Total files: {len(files)} | Processed: {len(processed)} | Pending: {len(pending)}"
+              + (f" | shard {args.shard_index}/{args.shard_count}" if args.shard_count > 1 else ""))
+
+    preview_suffix = f".shard{args.shard_index}" if args.shard_count > 1 and not args.merge_shards else ""
+    preview_path = target_dir / f"{base_name}_live_preview{preview_suffix}.md"
+    # A fresh cache gets a fresh preview too. Shards never share a preview handle.
+    if not args.merge_shards:
+        with _bulk_preview_writer(preview_path, reset, index["unique_units"].values()) as preview:
+            for count, path in enumerate(pending, start=1):
+                print(f"[{count}/{len(pending)}] Extracting: {path}", flush=True)
+                raw = path.read_text(encoding="utf-8", errors="replace")
+                if hashlib.sha256(path.read_bytes()).hexdigest() != fingerprints[str(path)]:
+                    raise ValueError("an input changed during bulk extraction; rerun the command")
+                staged = [(hashlib.md5(get_canonical(statement).encode()).hexdigest(), statement, anchor)
+                          for statement, anchor in _bulk_extract(raw, path, args.fast_clean)]
+                for digest, statement, anchor in staged:
+                    unit = index["unique_units"].get(digest)
+                    if unit is not None:
+                        unit["count"] += 1
+                        if str(path) not in unit["sources"]:
+                            unit["sources"].append(str(path))
+                        if anchor not in unit["source_anchors"]:
+                            unit["source_anchors"].append(anchor)
+                    else:
+                        index["unique_units"][digest] = {
+                            "text": statement, "count": 1, "sources": [str(path)],
+                            "source_anchor": anchor, "source_anchors": [anchor],
+                            "cat": categorize(statement)}
+                        preview.write(f"- {statement} _{anchor}_\n")
+                index["files_processed"].append(str(path))
+                if count % 50 == 0:
+                    preview.flush()
+                    _atomic_write_json(index_file, index)
+    _atomic_write_json(index_file, index)
+    unique_list = list(index["unique_units"].values())
+    print(f"\nStage 1 Complete: {len(unique_list)} exact-unique units.")
+    if args.shard_count > 1 and not args.merge_shards:
+        print(f"Shard {args.shard_index}/{args.shard_count} done -- run --merge-shards once all shards finish.")
         return 0
 
-    # STAGE 2: Removed O(N^2) Jaccard. We rely on Exact Match + Semantic.
-    lexical_clusters = []
-    for u in unique_list:
-        c = dict(u)
-        c["items"] = [u]
-        c["_words"] = set(get_canonical(u["text"]).split())
-        lexical_clusters.append(c)
-    print(f"Skipping Stage 2 Lexical Jaccard (too slow for 1.4M items). Passing {len(lexical_clusters)} clusters to Stage 3.", flush=True)
-    
-    out_md = target_dir / f"{base_name}_master.md"
-    
-    # STAGE 3: Semantic Embed & Dedup
-    if args.semantic:
+    clusters = [dict(unit, items=[unit]) for unit in unique_list]
+    print(f"Skipping Stage 2 Lexical Jaccard. Passing {len(clusters)} clusters to Stage 3.", flush=True)
+    if args.semantic and clusters:
         print("\nStarting Stage 3: Semantic Dedup & Sort...")
-        texts_to_embed = [c["text"] for c in lexical_clusters if "vector" not in c]
-        if texts_to_embed:
-            print(f"Embedding {len(texts_to_embed)} representatives...")
-            
-            # Chunk embeddings to avoid Ollama timeouts on massive lists.
-            # Chunks run concurrently (one worker per host in OLLAMA_URLS, set via
-            # OLLAMA_HOSTS) and the ollama-client pool spreads them over the hosts
-            # with failover -- a single host serializes every chunk behind its
-            # `-np 1` concurrency, so spreading across N hosts cuts wall time ~Nx.
-            chunk_size = 100
-            chunks = [texts_to_embed[i:i + chunk_size] for i in range(0, len(texts_to_embed), chunk_size)]
-            results: list[list[list[float]] | None] = [None] * len(chunks)
+        chunk_size = 100
+        chunks = [clusters[i:i + chunk_size] for i in range(0, len(clusters), chunk_size)]
+        results = [None] * len(chunks)
 
-            def _embed_one(idx: int, chunk: list[str]) -> None:
-                try:
-                    embs = _ollama_embed(chunk, args.model)
-                    results[idx] = embs if embs else [None] * len(chunk)
-                except Exception as e:
-                    print(f"WARN: Embedding chunk {idx} failed ({e}), skipping chunk.", file=sys.stderr)
-                    results[idx] = [None] * len(chunk)
+        def embed_chunk(item):
+            number, chunk = item
+            try:
+                results[number] = _validate_vectors(_ollama_embed([unit["text"] for unit in chunk], args.model), len(chunk))
+            except OllamaUnavailable:
+                print(f"WARN: embedding chunk {number} unavailable; keeping its units unclustered.", file=sys.stderr)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(OLLAMA_URLS))) as ex:
-                list(ex.map(lambda a: _embed_one(*a), enumerate(chunks)))
-
-            all_embs = [v for chunk_res in results for v in chunk_res]
-                    
-            if all_embs:
-                for c, v in zip([x for x in lexical_clusters if "vector" not in x], all_embs):
-                    if v is not None:
-                        c["vector"] = v
-                        c["magnitude"] = precompute_magnitude(v)
-                    
-        semantic_clusters = []
-        unembedded = []
-        for c in lexical_clusters:
-            vec = c.get("vector")
-            mag = c.get("magnitude", 0.0)
-            if not vec or mag == 0.0:
-                # Embedding failed for this unit (chunk error) — keep it as its
-                # own cluster; a transient Ollama hiccup must never silently
-                # delete extracted content from the master.
-                unembedded.append(dict(c))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(OLLAMA_URLS))) as executor:
+            list(executor.map(embed_chunk, enumerate(chunks)))
+        dimension = None
+        for chunk, vectors in zip(chunks, results):
+            if vectors is None:
                 continue
-            
-            placed = False
-            for sc in semantic_clusters:
-                dot = sum(a * b for a, b in zip(vec, sc["centroid"]))
-                sim = dot / (mag * sc["centroid_mag"]) if mag and sc["centroid_mag"] else 0.0
-                if sim > args.threshold:
-                    sc["items"].extend(c["items"])
-                    sc["count"] += c["count"]
-                    sc["sources"].extend(c["sources"])
-                    sc["sources"] = list(set(sc["sources"]))
-                    placed = True
+            try:
+                _validate_vectors(vectors, len(chunk), dimension)
+            except OllamaUnavailable:
+                print("WARN: embedding chunks use incompatible dimensions; keeping affected units unclustered.", file=sys.stderr)
+                continue
+            dimension = len(vectors[0])
+            for unit, vector in zip(chunk, vectors):
+                unit["vector"] = vector
+                unit["magnitude"] = precompute_magnitude(vector)
+        semantic_clusters, unembedded = [], []
+        for unit in clusters:
+            vector, magnitude = unit.get("vector"), unit.get("magnitude", 0.0)
+            if not vector or magnitude == 0.0:
+                unembedded.append(unit)
+                continue
+            for existing in semantic_clusters:
+                similarity = sum(a * b for a, b in zip(vector, existing["centroid"])) / (magnitude * existing["centroid_mag"])
+                if similarity > args.threshold:
+                    existing["items"].extend(unit["items"])
+                    existing["count"] += unit["count"]
+                    existing["sources"] = list(dict.fromkeys(existing["sources"] + unit["sources"]))
+                    existing["source_anchors"] = list(dict.fromkeys(_unit_anchors(existing) + _unit_anchors(unit)))
                     break
-            if not placed:
-                sc = dict(c)
-                sc["centroid"] = vec
-                sc["centroid_mag"] = mag
-                semantic_clusters.append(sc)
-                
+            else:
+                semantic_clusters.append(dict(unit, centroid=vector, centroid_mag=magnitude))
         if unembedded:
-            print(f"WARN: {len(unembedded)} units kept unclustered (embedding failed for their chunks)", file=sys.stderr)
-            semantic_clusters.extend(unembedded)
-        semantic_clusters.sort(key=lambda x: x["count"], reverse=True)
-        
-        with open(out_md, 'w') as f:
-            f.write("# Semantic Distillation Master (3-Stage Funnel)\n\n")
-            for cat in ["Actionables", "Questions", "Statements"]:
-                cat_clusters = [c for c in semantic_clusters if c["cat"] == cat]
-                if not cat_clusters: continue
-                f.write(f"## {cat}\n\n")
-                for c in cat_clusters:
-                    sources = [Path(s).name for s in c["sources"]]
-                    src_str = ", ".join(sources[:3]) + ("..." if len(sources) > 3 else "")
-                    dup_str = f" [x{c['count']}]" if c['count'] > 1 else ""
-                    f.write(f"- {c['text']} _{src_str}_{dup_str}\n")
-                f.write("\n")
-        print(f"Done. Funneled {len(unique_list)} units into {len(semantic_clusters)} semantic points.")
-    else:
-        lexical_clusters.sort(key=lambda x: x["count"], reverse=True)
-        with open(out_md, 'w') as f:
-            f.write("# Bulk Distillation Master (2-Stage Lexical Funnel)\n\n")
-            for c in lexical_clusters:
-                sources = [Path(s).name for s in c["sources"]]
-                src_str = ", ".join(sources[:3]) + ("..." if len(sources) > 3 else "")
-                dup_str = f" [x{c['count']}]" if c['count'] > 1 else ""
-                f.write(f"- {c['text']} _{src_str}_{dup_str}\n")
-        print(f"Done. Extracted {len(lexical_clusters)} unique points.")
-
+            print(f"WARN: {len(unembedded)} units kept unclustered because embeddings are unavailable or zero.", file=sys.stderr)
+        clusters = semantic_clusters + unembedded
+    clusters.sort(key=lambda unit: unit["count"], reverse=True)
+    out_md = target_dir / f"{base_name}_master.md"
+    with _atomic_text_writer(out_md) as out:
+        if args.semantic:
+            out.write("# Semantic Distillation Master (3-Stage Funnel)\n\n")
+            for category in ("Actionables", "Questions", "Statements"):
+                group = [unit for unit in clusters if unit["cat"] == category]
+                if not group:
+                    continue
+                out.write(f"## {category}\n\n")
+                for unit in group:
+                    duplicate = f" [x{unit['count']}]" if unit["count"] > 1 else ""
+                    out.write(f"- {unit['text']} _{_bulk_source_label(unit)}_{duplicate}\n")
+                out.write("\n")
+        else:
+            out.write("# Bulk Distillation Master (2-Stage Lexical Funnel)\n\n")
+            for unit in clusters:
+                duplicate = f" [x{unit['count']}]" if unit["count"] > 1 else ""
+                out.write(f"- {unit['text']} _{_bulk_source_label(unit)}_{duplicate}\n")
+    print(f"Done. Funneled {len(unique_list)} units into {len(clusters)} points.")
     print(f"Master file: {out_md}")
     return 0
 

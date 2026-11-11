@@ -7,7 +7,24 @@ __pycache__/
 # Distillation outputs — regenerable; don't commit even if a mirror lands in-repo
 *.pages/
 .*_distill_index.json
+.*_distill_index.shard*.json
+.mirror_split_manifest.json
 *_master.md
 *_live_preview.md
+*_live_preview.shard*.md
 .venv/
 *.egg-info/
+
+# Local configuration, build outputs, and editor caches
+.env
+.env.*
+!.env.example
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.swp
+*.swo

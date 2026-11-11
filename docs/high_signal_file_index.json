@@ -1,0 +1,692 @@
+[
+  {
+    "component": "distillers",
+    "files": [
+      {
+        "path": ".editorconfig",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".env.example",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".gitattributes",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/CODEOWNERS",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/FUNDING.yml",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/ISSUE_TEMPLATE/bug_report.md",
+        "purpose": "Behavior",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/ISSUE_TEMPLATE/feature_request.md",
+        "purpose": "Problem",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/SECURITY.md",
+        "purpose": "Security reporting",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/copilot-instructions.md",
+        "purpose": "Default Execution Strategy",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/dependabot.yml",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/pull_request_template.md",
+        "purpose": "What changed and why",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".github/workflows/ci.yml",
+        "purpose": "Repository infra file.",
+        "layer": "infra",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".gitignore",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".vscode/extensions.json",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".vscode/launch.json",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": ".vscode/settings.json",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "AGENTS.md",
+        "purpose": "AGENTS.md — distillers",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "CLAUDE.md",
+        "purpose": "CLAUDE.md — distillers",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "CODE_OF_CONDUCT.md",
+        "purpose": "Code of conduct",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "CONTRIBUTING.md",
+        "purpose": "Contributing",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "GEMINI.md",
+        "purpose": "Gemini contributor guidance",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "KICKOFF.md",
+        "purpose": "Historical implementation brief; current guidance lives under docs/.",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "LICENSE",
+        "purpose": "Repository config file.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "Makefile",
+        "purpose": "Convenient stdlib verification and documentation targets.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "README.md",
+        "purpose": "distillers",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "STATUS.md",
+        "purpose": "Historical downstream acceptance snapshot, not current integration evidence.",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "SUMMARY.md",
+        "purpose": "Historical build summary, not current runtime evidence.",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "categorize_topics.py",
+        "purpose": "Frozen historical corpus-specific helper; never import or run in routine checks.",
+        "layer": "frozen-script",
+        "exports": [],
+        "depends_on": [
+          "re"
+        ]
+      },
+      {
+        "path": "clean_binary_garbage.py",
+        "purpose": "Frozen historical corpus-specific helper; never import or run in routine checks.",
+        "layer": "frozen-script",
+        "exports": [],
+        "depends_on": [
+          "glob",
+          "os",
+          "re"
+        ]
+      },
+      {
+        "path": "clean_index_garbage.py",
+        "purpose": "Frozen historical corpus-specific helper; never import or run in routine checks.",
+        "layer": "frozen-script",
+        "exports": [],
+        "depends_on": [
+          "json",
+          "re"
+        ]
+      },
+      {
+        "path": "distill_offline.py",
+        "purpose": "Canonical document-distillation CLI and importable engine.",
+        "layer": "entrypoint",
+        "exports": [
+          "_today",
+          "_slugify",
+          "_safe_filename_part",
+          "_atomic_text_writer",
+          "_atomic_write_text",
+          "_atomic_write_json",
+          "_unit_anchors",
+          "_unit_salience",
+          "_render_unit_line",
+          "render_markdown",
+          "_write_pair",
+          "cmd_render",
+          "_basename_of",
+          "_read_text",
+          "_unified_hunks",
+          "cmd_diff",
+          "_norm",
+          "_next_id",
+          "cmd_merge",
+          "_TextExtractor",
+          "_looks_like_html",
+          "_html_to_text",
+          "cmd_fetch",
+          "cmd_clean",
+          "_heuristic_type",
+          "_extract_units_from_text",
+          "cmd_extract",
+          "parse_mirror",
+          "_mirror_hostname",
+          "docset_key",
+          "_page_slug",
+          "split_mirror_to_dir",
+          "cmd_mirror",
+          "_client",
+          "_validate_vectors",
+          "_ollama_embed",
+          "_has_model",
+          "_index_path",
+          "cmd_index",
+          "_load_indexes",
+          "_model_identity",
+          "cmd_novelty",
+          "clean_and_split",
+          "categorize",
+          "precompute_magnitude",
+          "get_canonical",
+          "compute_jaccard",
+          "_load_json_input",
+          "_shard_owns",
+          "_shard_index_path",
+          "_bulk_fingerprints",
+          "_new_bulk_index",
+          "_valid_bulk_index",
+          "_bulk_cache_matches",
+          "_bulk_extract",
+          "_merge_shard_indexes",
+          "_bulk_source_label",
+          "_bulk_preview_writer",
+          "_is_owned_bulk_output",
+          "cmd_bulk",
+          "main"
+        ],
+        "depends_on": [
+          "__future__",
+          "argparse",
+          "concurrent.futures",
+          "contextlib",
+          "datetime",
+          "difflib",
+          "hashlib",
+          "html",
+          "html.parser",
+          "json",
+          "math",
+          "ollama_client",
+          "os",
+          "pathlib",
+          "re",
+          "stat",
+          "subprocess",
+          "sys",
+          "tempfile",
+          "unicodedata",
+          "urllib.error",
+          "urllib.request"
+        ]
+      },
+      {
+        "path": "docs/ARCHITECTURE.md",
+        "purpose": "Architecture",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/COMPONENTS.md",
+        "purpose": "Components",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/DEVELOPMENT.md",
+        "purpose": "Development",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/INSTALLATION.md",
+        "purpose": "Installation",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/MCP.md",
+        "purpose": "MCP boundary",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/SECURITY.md",
+        "purpose": "Security",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/TESTING.md",
+        "purpose": "Testing",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/archive/README.md",
+        "purpose": "Workflow log archive",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/audit/completion-files.json",
+        "purpose": "Repository docs file.",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/caching-and-optimization.md",
+        "purpose": "Caching and optimization",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/cli-and-operations.md",
+        "purpose": "CLI and operations",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/code-deep-optimizer-2026-11-11.md",
+        "purpose": "Code deep optimizer — 2026-11-11",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/codebase-overview.md",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/external-calls.md",
+        "purpose": "External calls",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/high_signal_file_index.json",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/integrations-and-assumptions.md",
+        "purpose": "Integrations and assumptions",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/known-issues.md",
+        "purpose": "Known limitations",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/llm-repo-index.json",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/logging.md",
+        "purpose": "Logging",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/onboarding.md",
+        "purpose": "Onboarding",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/operations-registry.json",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/repo-bootstrap-audit-2026-11-11.md",
+        "purpose": "Repository bootstrap audit — 2026-11-11",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/requirements.md",
+        "purpose": "Requirements",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/runbooks/embedding-fallback.md",
+        "purpose": "Diagnose embedding fallback",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/runbooks/mirror-distillation.md",
+        "purpose": "Process a mirror",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/runbooks/release-and-rollback.md",
+        "purpose": "Deliver or roll back a change",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/tool-inventory.json",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "docs/wiki/README.md",
+        "purpose": "Distillers project wiki",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "llms-facts.txt",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "llms-full.txt",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "llms-small.txt",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "llms.txt",
+        "purpose": "Generated repository reference; regenerate with scripts/generate_repo_docs.py.",
+        "layer": "generated",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "memory.md",
+        "purpose": "distillers workflow log",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "prompts.md",
+        "purpose": "distillers request log",
+        "layer": "docs",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "pyproject.toml",
+        "purpose": "Package version, Python requirement and optional semantic dependency pin.",
+        "layer": "config",
+        "exports": [],
+        "depends_on": []
+      },
+      {
+        "path": "scripts/generate_repo_docs.py",
+        "purpose": "Static inventory generator and documentation drift gate.",
+        "layer": "tooling",
+        "exports": [
+          "census",
+          "role",
+          "checked_path",
+          "file_cards",
+          "cli_inventory",
+          "operation_inventory",
+          "render",
+          "missing_links",
+          "main"
+        ],
+        "depends_on": [
+          "__future__",
+          "argparse",
+          "ast",
+          "json",
+          "os",
+          "pathlib",
+          "re",
+          "subprocess",
+          "sys",
+          "tomllib"
+        ]
+      },
+      {
+        "path": "scripts/rotate_workflow_logs.py",
+        "purpose": "Archive older workflow-log sections with editor-swap protection.",
+        "layer": "tooling",
+        "exports": [
+          "atomic_write",
+          "check_swaps",
+          "version_starts",
+          "rotate",
+          "main"
+        ],
+        "depends_on": [
+          "__future__",
+          "argparse",
+          "os",
+          "pathlib",
+          "re",
+          "tempfile"
+        ]
+      },
+      {
+        "path": "split_master.py",
+        "purpose": "Frozen historical corpus-specific helper; never import or run in routine checks.",
+        "layer": "frozen-script",
+        "exports": [
+          "categorize",
+          "write_chunks"
+        ],
+        "depends_on": [
+          "math",
+          "re"
+        ]
+      },
+      {
+        "path": "tests/test_core.py",
+        "purpose": "Dependency-free data safety, provenance and fallback regressions.",
+        "layer": "test",
+        "exports": [
+          "mirror",
+          "CoreTests"
+        ],
+        "depends_on": [
+          "contextlib",
+          "distill_offline",
+          "io",
+          "json",
+          "os",
+          "pathlib",
+          "subprocess",
+          "tempfile",
+          "types",
+          "unittest",
+          "unittest.mock"
+        ]
+      },
+      {
+        "path": "tests/test_ollama_layer.py",
+        "purpose": "Isolated configuration and optional loopback-client integration tests.",
+        "layer": "test",
+        "exports": [
+          "_load",
+          "_Fake",
+          "Configuration",
+          "MissingClient",
+          "OllamaLayer"
+        ],
+        "depends_on": [
+          "contextlib",
+          "http.server",
+          "importlib.util",
+          "io",
+          "json",
+          "math",
+          "os",
+          "pathlib",
+          "sys",
+          "tempfile",
+          "threading",
+          "types",
+          "unittest",
+          "unittest.mock"
+        ]
+      },
+      {
+        "path": "tests/test_tooling.py",
+        "purpose": "Repository test file.",
+        "layer": "test",
+        "exports": [
+          "DocumentationInventoryTests",
+          "WorkflowRotationTests"
+        ],
+        "depends_on": [
+          "importlib.util",
+          "os",
+          "pathlib",
+          "subprocess",
+          "tempfile",
+          "unittest",
+          "unittest.mock"
+        ]
+      }
+    ]
+  }
+]
