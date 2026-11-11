@@ -1,0 +1,444 @@
+{
+  "generated_by": "scripts/generate_repo_docs.py",
+  "kind": "CLI (no MCP server)",
+  "totalTools": 3,
+  "entrypoints": [
+    {
+      "name": "distill_offline.py",
+      "invocation": "python3 distill_offline.py",
+      "subcommands": [
+        {
+          "name": "bulk",
+          "line": 1514
+        },
+        {
+          "name": "render",
+          "line": 1535
+        },
+        {
+          "name": "diff",
+          "line": 1542
+        },
+        {
+          "name": "merge",
+          "line": 1547
+        },
+        {
+          "name": "index",
+          "line": 1560
+        },
+        {
+          "name": "novelty",
+          "line": 1568
+        },
+        {
+          "name": "fetch",
+          "line": 1580
+        },
+        {
+          "name": "clean",
+          "line": 1585
+        },
+        {
+          "name": "extract",
+          "line": 1593
+        },
+        {
+          "name": "mirror",
+          "line": 1598
+        }
+      ],
+      "options": [
+        {
+          "parser": "b",
+          "flags": [
+            "dir"
+          ],
+          "settings_source": {},
+          "source": "distill_offline.py:1515"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--recursive",
+            "--no-recursive"
+          ],
+          "settings_source": {
+            "action": "argparse.BooleanOptionalAction",
+            "default": "True"
+          },
+          "source": "distill_offline.py:1516"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--resume",
+            "--no-resume"
+          ],
+          "settings_source": {
+            "action": "argparse.BooleanOptionalAction",
+            "default": "True"
+          },
+          "source": "distill_offline.py:1518"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--fast-clean",
+            "--no-fast-clean"
+          ],
+          "settings_source": {
+            "action": "argparse.BooleanOptionalAction",
+            "default": "True"
+          },
+          "source": "distill_offline.py:1520"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--semantic",
+            "--no-semantic"
+          ],
+          "settings_source": {
+            "action": "argparse.BooleanOptionalAction",
+            "default": "True"
+          },
+          "source": "distill_offline.py:1522"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--threshold"
+          ],
+          "settings_source": {
+            "type": "float",
+            "default": "0.88"
+          },
+          "source": "distill_offline.py:1524"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--model"
+          ],
+          "settings_source": {
+            "default": "DEFAULT_EMBED_MODEL"
+          },
+          "source": "distill_offline.py:1525"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--shard-index"
+          ],
+          "settings_source": {
+            "type": "int",
+            "default": "0"
+          },
+          "source": "distill_offline.py:1526"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--shard-count"
+          ],
+          "settings_source": {
+            "type": "int",
+            "default": "1"
+          },
+          "source": "distill_offline.py:1528"
+        },
+        {
+          "parser": "b",
+          "flags": [
+            "--merge-shards"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "distill_offline.py:1530"
+        },
+        {
+          "parser": "r",
+          "flags": [
+            "--in"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1536"
+        },
+        {
+          "parser": "r",
+          "flags": [
+            "--slug"
+          ],
+          "settings_source": {},
+          "source": "distill_offline.py:1538"
+        },
+        {
+          "parser": "r",
+          "flags": [
+            "--json-only"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "distill_offline.py:1539"
+        },
+        {
+          "parser": "d",
+          "flags": [
+            "--old"
+          ],
+          "settings_source": {
+            "required": "True"
+          },
+          "source": "distill_offline.py:1543"
+        },
+        {
+          "parser": "d",
+          "flags": [
+            "--new"
+          ],
+          "settings_source": {
+            "required": "True"
+          },
+          "source": "distill_offline.py:1544"
+        },
+        {
+          "parser": "m",
+          "flags": [
+            "--existing"
+          ],
+          "settings_source": {
+            "required": "True"
+          },
+          "source": "distill_offline.py:1548"
+        },
+        {
+          "parser": "m",
+          "flags": [
+            "--new-units"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1549"
+        },
+        {
+          "parser": "m",
+          "flags": [
+            "--threshold"
+          ],
+          "settings_source": {
+            "type": "float",
+            "default": "0.82"
+          },
+          "source": "distill_offline.py:1551"
+        },
+        {
+          "parser": "m",
+          "flags": [
+            "--semantic"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "distill_offline.py:1554"
+        },
+        {
+          "parser": "m",
+          "flags": [
+            "--model"
+          ],
+          "settings_source": {
+            "default": "DEFAULT_EMBED_MODEL"
+          },
+          "source": "distill_offline.py:1556"
+        },
+        {
+          "parser": "ix",
+          "flags": [
+            "--in"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1561"
+        },
+        {
+          "parser": "ix",
+          "flags": [
+            "--name"
+          ],
+          "settings_source": {},
+          "source": "distill_offline.py:1563"
+        },
+        {
+          "parser": "ix",
+          "flags": [
+            "--model"
+          ],
+          "settings_source": {
+            "default": "DEFAULT_EMBED_MODEL"
+          },
+          "source": "distill_offline.py:1564"
+        },
+        {
+          "parser": "nv",
+          "flags": [
+            "--in"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1570"
+        },
+        {
+          "parser": "nv",
+          "flags": [
+            "--against"
+          ],
+          "settings_source": {
+            "nargs": "\"*\""
+          },
+          "source": "distill_offline.py:1572"
+        },
+        {
+          "parser": "nv",
+          "flags": [
+            "--threshold"
+          ],
+          "settings_source": {
+            "type": "float",
+            "default": "0.90"
+          },
+          "source": "distill_offline.py:1574"
+        },
+        {
+          "parser": "nv",
+          "flags": [
+            "--model"
+          ],
+          "settings_source": {
+            "default": "DEFAULT_EMBED_MODEL"
+          },
+          "source": "distill_offline.py:1576"
+        },
+        {
+          "parser": "f",
+          "flags": [
+            "--url"
+          ],
+          "settings_source": {
+            "required": "True"
+          },
+          "source": "distill_offline.py:1581"
+        },
+        {
+          "parser": "f",
+          "flags": [
+            "--timeout"
+          ],
+          "settings_source": {
+            "type": "int",
+            "default": "30"
+          },
+          "source": "distill_offline.py:1582"
+        },
+        {
+          "parser": "cl",
+          "flags": [
+            "--in"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1587"
+        },
+        {
+          "parser": "cl",
+          "flags": [
+            "--force-html"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "distill_offline.py:1589"
+        },
+        {
+          "parser": "e",
+          "flags": [
+            "--in"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1594"
+        },
+        {
+          "parser": "mr",
+          "flags": [
+            "--in"
+          ],
+          "settings_source": {
+            "default": "\"-\""
+          },
+          "source": "distill_offline.py:1600"
+        },
+        {
+          "parser": "mr",
+          "flags": [
+            "--list"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "distill_offline.py:1602"
+        },
+        {
+          "parser": "mr",
+          "flags": [
+            "--split-dir"
+          ],
+          "settings_source": {},
+          "source": "distill_offline.py:1603"
+        },
+        {
+          "parser": "mr",
+          "flags": [
+            "--extract"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "distill_offline.py:1605"
+        }
+      ]
+    },
+    {
+      "name": "scripts/generate_repo_docs.py",
+      "invocation": "python3 scripts/generate_repo_docs.py",
+      "subcommands": [],
+      "options": [
+        {
+          "parser": "parser",
+          "flags": [
+            "--check"
+          ],
+          "settings_source": {
+            "action": "\"store_true\""
+          },
+          "source": "scripts/generate_repo_docs.py:204"
+        }
+      ]
+    },
+    {
+      "name": "scripts/rotate_workflow_logs.py",
+      "invocation": "python3 scripts/rotate_workflow_logs.py",
+      "subcommands": [],
+      "options": []
+    }
+  ]
+}

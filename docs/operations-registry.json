@@ -1,0 +1,151 @@
+{
+  "generated_by": "scripts/generate_repo_docs.py",
+  "operations": [
+    {
+      "id": "fetch-url",
+      "kind": "check",
+      "transport": "subprocess/http(s)",
+      "target": "caller-selected HTTP(S) URL via curl",
+      "sourceFile": "distill_offline.py",
+      "sourceSymbol": "cmd_fetch",
+      "line": 536,
+      "trigger": "python3 distill_offline.py fetch --url <URL>",
+      "readOnly": true,
+      "retryPolicy": "Bounded curl request; rerun explicitly.",
+      "verifyDatastore": false,
+      "verification": "Regression tests inspect outputs; no runtime datastore read-back service.",
+      "remediation": {
+        "CalledProcessError": {
+          "hint": "Check connectivity and URL; do not log URL credentials.",
+          "safety": "escalate"
+        },
+        "TimeoutExpired": {
+          "hint": "Check connectivity or choose an appropriate timeout.",
+          "safety": "escalate"
+        },
+        "FileNotFoundError": {
+          "hint": "Install curl.",
+          "safety": "escalate"
+        }
+      }
+    },
+    {
+      "id": "embed-units",
+      "kind": "check",
+      "transport": "http",
+      "target": "OLLAMA_HOSTS or OLLAMA_HOST via optional ollama-client",
+      "sourceFile": "distill_offline.py",
+      "sourceSymbol": "_ollama_embed",
+      "line": 882,
+      "trigger": "python3 distill_offline.py index --in <JSON>",
+      "readOnly": false,
+      "retryPolicy": "Shared client owns retries, failover and model pulls.",
+      "verifyDatastore": false,
+      "verification": "Regression tests inspect outputs; no runtime datastore read-back service.",
+      "remediation": {
+        "OllamaUnavailable": {
+          "hint": "Install optional client or restore Ollama; merge/novelty/bulk degrade where supported.",
+          "safety": "escalate"
+        }
+      }
+    },
+    {
+      "id": "render-artifacts",
+      "kind": "sync",
+      "transport": "local",
+      "target": "central and optional source-adjacent JSON/Markdown",
+      "sourceFile": "distill_offline.py",
+      "sourceSymbol": "_write_pair",
+      "line": 270,
+      "trigger": "python3 distill_offline.py render --in <JSON>",
+      "readOnly": false,
+      "retryPolicy": "No automatic retry.",
+      "verifyDatastore": false,
+      "verification": "Regression tests inspect outputs; no runtime datastore read-back service.",
+      "remediation": {
+        "OSError": {
+          "hint": "Check permissions and available storage.",
+          "safety": "escalate"
+        }
+      }
+    },
+    {
+      "id": "split-mirror",
+      "kind": "sync",
+      "transport": "local",
+      "target": "dedicated page directory and ownership manifest",
+      "sourceFile": "distill_offline.py",
+      "sourceSymbol": "split_mirror_to_dir",
+      "line": 733,
+      "trigger": "python3 distill_offline.py mirror --in <MIRROR> --split-dir <DIR>",
+      "readOnly": false,
+      "retryPolicy": "No automatic retry.",
+      "verifyDatastore": false,
+      "verification": "Regression tests inspect outputs; no runtime datastore read-back service.",
+      "remediation": {
+        "ValueError": {
+          "hint": "Use a dedicated directory; never bypass invalid ownership metadata.",
+          "safety": "escalate"
+        }
+      }
+    },
+    {
+      "id": "write-vector-index",
+      "kind": "sync",
+      "transport": "local",
+      "target": "flat JSON index under ~/.claude/distillations/.index",
+      "sourceFile": "distill_offline.py",
+      "sourceSymbol": "cmd_index",
+      "line": 923,
+      "trigger": "python3 distill_offline.py index --in <JSON>",
+      "readOnly": false,
+      "retryPolicy": "No automatic retry.",
+      "verifyDatastore": false,
+      "verification": "Regression tests inspect outputs; no runtime datastore read-back service.",
+      "remediation": {
+        "OSError": {
+          "hint": "Check output permissions and available storage.",
+          "safety": "escalate"
+        }
+      }
+    },
+    {
+      "id": "bulk-artifacts",
+      "kind": "sync",
+      "transport": "local",
+      "target": "versioned cache, preview and master next to input",
+      "sourceFile": "distill_offline.py",
+      "sourceSymbol": "cmd_bulk",
+      "line": 1306,
+      "trigger": "python3 distill_offline.py bulk <PATH> --no-semantic",
+      "readOnly": false,
+      "retryPolicy": "Content-aware resume; explicit rerun.",
+      "verifyDatastore": false,
+      "verification": "Regression tests inspect outputs; no runtime datastore read-back service.",
+      "remediation": {
+        "ValueError": {
+          "hint": "Check shard completeness, ownership and input configuration.",
+          "safety": "escalate"
+        },
+        "OSError": {
+          "hint": "Check input readability and output storage.",
+          "safety": "escalate"
+        }
+      }
+    }
+  ],
+  "audit": {
+    "scope": "Static operation-family inventory; not a runtime dispatcher.",
+    "five_standard_contract": "not fully adopted",
+    "gaps": [
+      "No centralized JSONL error sink",
+      "No dashboard runtime",
+      "No automatic remediation executor",
+      "No runtime datastore read-back"
+    ]
+  },
+  "status": {
+    "live_service_probed": false,
+    "semantic_indexing_run": false
+  }
+}

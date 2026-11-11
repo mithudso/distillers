@@ -1,0 +1,327 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "cf8da39",
+  "scope": "task-owned changed paths; generated inventories included",
+  "files": [
+    {
+      "path": ".editorconfig",
+      "lines": 24,
+      "status": "updated"
+    },
+    {
+      "path": ".env.example",
+      "lines": 7,
+      "status": "added"
+    },
+    {
+      "path": ".gitattributes",
+      "lines": 7,
+      "status": "added"
+    },
+    {
+      "path": ".github/CODEOWNERS",
+      "lines": 6,
+      "status": "added"
+    },
+    {
+      "path": ".github/FUNDING.yml",
+      "lines": 9,
+      "status": "updated"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.md",
+      "lines": 22,
+      "status": "added"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.md",
+      "lines": 20,
+      "status": "added"
+    },
+    {
+      "path": ".github/SECURITY.md",
+      "lines": 12,
+      "status": "added"
+    },
+    {
+      "path": ".github/copilot-instructions.md",
+      "lines": 44,
+      "status": "added"
+    },
+    {
+      "path": ".github/dependabot.yml",
+      "lines": 10,
+      "status": "added"
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "lines": 22,
+      "status": "updated"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "lines": 70,
+      "status": "added"
+    },
+    {
+      "path": ".gitignore",
+      "lines": 33,
+      "status": "updated"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "lines": 3,
+      "status": "added"
+    },
+    {
+      "path": ".vscode/launch.json",
+      "lines": 17,
+      "status": "added"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "lines": 11,
+      "status": "added"
+    },
+    {
+      "path": "AGENTS.md",
+      "lines": 25,
+      "status": "updated"
+    },
+    {
+      "path": "CLAUDE.md",
+      "lines": 114,
+      "status": "updated"
+    },
+    {
+      "path": "CODE_OF_CONDUCT.md",
+      "lines": 12,
+      "status": "added"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "lines": 18,
+      "status": "added"
+    },
+    {
+      "path": "GEMINI.md",
+      "lines": 5,
+      "status": "added"
+    },
+    {
+      "path": "Makefile",
+      "lines": 15,
+      "status": "added"
+    },
+    {
+      "path": "README.md",
+      "lines": 102,
+      "status": "updated"
+    },
+    {
+      "path": "distill_offline.py",
+      "lines": 1620,
+      "status": "updated"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "lines": 78,
+      "status": "updated"
+    },
+    {
+      "path": "docs/COMPONENTS.md",
+      "lines": 52,
+      "status": "added"
+    },
+    {
+      "path": "docs/DEVELOPMENT.md",
+      "lines": 92,
+      "status": "updated"
+    },
+    {
+      "path": "docs/INSTALLATION.md",
+      "lines": 53,
+      "status": "added"
+    },
+    {
+      "path": "docs/MCP.md",
+      "lines": 14,
+      "status": "added"
+    },
+    {
+      "path": "docs/SECURITY.md",
+      "lines": 52,
+      "status": "added"
+    },
+    {
+      "path": "docs/TESTING.md",
+      "lines": 85,
+      "status": "updated"
+    },
+    {
+      "path": "docs/archive/README.md",
+      "lines": 6,
+      "status": "added"
+    },
+    {
+      "path": "docs/audit/completion-files.json",
+      "lines": 327,
+      "status": "added"
+    },
+    {
+      "path": "docs/caching-and-optimization.md",
+      "lines": 24,
+      "status": "added"
+    },
+    {
+      "path": "docs/cli-and-operations.md",
+      "lines": 52,
+      "status": "added"
+    },
+    {
+      "path": "docs/code-deep-optimizer-2026-11-11.md",
+      "lines": 686,
+      "status": "added"
+    },
+    {
+      "path": "docs/codebase-overview.md",
+      "lines": 80,
+      "status": "added"
+    },
+    {
+      "path": "docs/external-calls.md",
+      "lines": 40,
+      "status": "added"
+    },
+    {
+      "path": "docs/high_signal_file_index.json",
+      "lines": 692,
+      "status": "added"
+    },
+    {
+      "path": "docs/integrations-and-assumptions.md",
+      "lines": 24,
+      "status": "added"
+    },
+    {
+      "path": "docs/known-issues.md",
+      "lines": 16,
+      "status": "added"
+    },
+    {
+      "path": "docs/llm-repo-index.json",
+      "lines": 690,
+      "status": "added"
+    },
+    {
+      "path": "docs/logging.md",
+      "lines": 22,
+      "status": "added"
+    },
+    {
+      "path": "docs/onboarding.md",
+      "lines": 15,
+      "status": "added"
+    },
+    {
+      "path": "docs/operations-registry.json",
+      "lines": 151,
+      "status": "added"
+    },
+    {
+      "path": "docs/repo-bootstrap-audit-2026-11-11.md",
+      "lines": 64,
+      "status": "added"
+    },
+    {
+      "path": "docs/requirements.md",
+      "lines": 35,
+      "status": "added"
+    },
+    {
+      "path": "docs/runbooks/embedding-fallback.md",
+      "lines": 33,
+      "status": "added"
+    },
+    {
+      "path": "docs/runbooks/mirror-distillation.md",
+      "lines": 33,
+      "status": "added"
+    },
+    {
+      "path": "docs/runbooks/release-and-rollback.md",
+      "lines": 42,
+      "status": "added"
+    },
+    {
+      "path": "docs/tool-inventory.json",
+      "lines": 444,
+      "status": "added"
+    },
+    {
+      "path": "docs/wiki/README.md",
+      "lines": 50,
+      "status": "added"
+    },
+    {
+      "path": "llms-facts.txt",
+      "lines": 10,
+      "status": "updated"
+    },
+    {
+      "path": "llms-full.txt",
+      "lines": 94,
+      "status": "updated"
+    },
+    {
+      "path": "llms-small.txt",
+      "lines": 14,
+      "status": "updated"
+    },
+    {
+      "path": "llms.txt",
+      "lines": 10,
+      "status": "updated"
+    },
+    {
+      "path": "memory.md",
+      "lines": 21,
+      "status": "added"
+    },
+    {
+      "path": "prompts.md",
+      "lines": 6,
+      "status": "added"
+    },
+    {
+      "path": "pyproject.toml",
+      "lines": 18,
+      "status": "updated"
+    },
+    {
+      "path": "scripts/generate_repo_docs.py",
+      "lines": 232,
+      "status": "added"
+    },
+    {
+      "path": "scripts/rotate_workflow_logs.py",
+      "lines": 108,
+      "status": "added"
+    },
+    {
+      "path": "tests/test_core.py",
+      "lines": 405,
+      "status": "added"
+    },
+    {
+      "path": "tests/test_ollama_layer.py",
+      "lines": 196,
+      "status": "updated"
+    },
+    {
+      "path": "tests/test_tooling.py",
+      "lines": 171,
+      "status": "added"
+    }
+  ]
+}

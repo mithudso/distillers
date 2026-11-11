@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "distillers"
-version = "0.1.0"
+version = "0.1.1"
 description = "Offline document-distillation engine (zero LLM tokens); Ollama embeddings via the shared ollama-client library."
 requires-python = ">=3.11"
-dependencies = [
-    "ollama-client @ git+https://github.com/mithudso/ollama-client",
+dependencies = []
+
+[project.optional-dependencies]
+semantic = [
+    "ollama-client @ git+https://github.com/mithudso/ollama-client@740aca7cbc5aab4941779f35f1ca17b59fe73c7f",
 ]
 
 [tool.setuptools]
