@@ -96,3 +96,7 @@ acceptance results. The four root helper scripts (`split_master.py`,
 ## License
 
 [Apache License 2.0](LICENSE).
+
+The optional shared-client repository is private; installing `.[semantic]`
+requires GitHub read access. The stdlib core and public CI need no credential.
+See [optional CI setup](docs/TESTING.md#authenticated-optional-ci).

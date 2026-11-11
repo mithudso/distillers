@@ -13,11 +13,12 @@ python3 -m unittest discover -s tests -v
 python3 scripts/generate_repo_docs.py --check
 ```
 
-These are the CI gates. CI uses Python 3.11 and 3.14 both with the core alone and
-with the optional `.[semantic]` client installed. Core jobs explicitly skip tests
-that need the optional client; fallback tests still run. Optional jobs exercise
-the fake-server transport contract. No live Ollama, ChromaDB, private corpus, or
-model pull is needed.
+These are the core CI gates on Python 3.11 and 3.14. Core jobs explicitly skip
+four transport tests that need the optional client; fallback tests still run.
+The pinned shared-client repository is private. Authenticated semantic CI is
+optional and skipped when unconfigured; see the setup below. Local optional
+jobs exercise fake-server transport. No live Ollama, ChromaDB, private corpus or
+actual model pull is needed by the tests.
 
 Run one existing suite with:
 
@@ -71,3 +72,14 @@ champion promotion surface in this repository.
 On local Python 3.15, the pinned optional client can emit upstream HTTPError
 cleanup ResourceWarnings during deliberate 404/503 fake-server responses. The
 assertions pass. This repository does not modify that separate dependency.
+
+## Authenticated optional CI
+
+The public core jobs need no private dependency or credential. The semantic jobs
+run only when repository variable `DISTILL_SEMANTIC_CI` is `true` and repository
+secret `OLLAMA_CLIENT_READ_TOKEN` supplies read-only access to the private
+`mithudso/ollama-client` repository. The workflow checks out its exact pinned
+commit without persisting credentials. Fork PRs never run the authenticated job.
+No token or variable was created during bootstrap. With this option unconfigured,
+semantic CI is explicitly skipped; validate it locally with the optional extra.
+The delivery PR records core and optional-job outcomes separately.

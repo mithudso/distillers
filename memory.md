@@ -8,6 +8,8 @@
 - Validation: core suite 52 pass plus 4 explicit optional-client skips; isolated
   semantic install 56 pass; syntax and metadata drift checks pass; known mirror
   remains 128 pages. Disposable corpus checks preserve page URL provenance.
+- CI: public Python 3.11/3.14 core checks; semantic jobs need explicit private
+  repository read access and are skipped while unconfigured. Local full suite passes.
 - Review: optimizer reached BLIND-AUDIT-DISSENT on its second blind gate. Its final
   preview symlink finding received a targeted fix and independent verification;
   no third blind gate or CLEAN claim followed. See the detailed audit report.

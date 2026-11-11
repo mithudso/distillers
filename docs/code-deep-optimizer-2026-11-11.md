@@ -61,7 +61,7 @@ inventories carry current symbol locations.
 | Known Aider `mirror --in` | 128 pages / 1,007,829 bytes / 250,711 estimated tokens | Same statistics |
 | Disposable-copy Aider `bulk --no-semantic` | Historical counts were not a current baseline | 128 pages processed; all retained primary anchors point to Aider page URLs; no network |
 | `git diff --check` | Clean | Pass |
-| Python 3.11 / 3.14 × core / semantic CI | No workflow | Exact final-push results recorded in delivery PR |
+| Python 3.11 / 3.14 core CI; optional authenticated semantic CI | No workflow | Core checks run remotely; semantic jobs explicitly skipped without private-repo credentials; full local semantic suite passed |
 
 The first 20 new engine tests reproduced 22 failing subcases and 5 errors before
 fixes. The blind-review tests separately reproduced six failing subcases before
@@ -579,7 +579,7 @@ checkpoint units. Four targeted regressions cover fresh/resume/race/fallback.
 
 These files were not imported, executed, modified or represented as optimized.
 They are excluded from routine checks and maintained-code convergence. Historical
-reports remain historical. No downstream live hub acceptance or re-embedding ran.
+reports remain historical. No downstream live hub acceptance or manual corpus re-embedding ran.
 
 ## Summary
 
@@ -605,7 +605,7 @@ Remove only those task-created paths when intentionally restoring the baseline.
 After delivery, prefer a reviewed revert PR as described in the rollback runbook.
 
 Index: static repo references refreshed; semantic-index refresh N/A outside the
-optimizer corpus roots. No vectors were generated. Durable lessons are recorded
+optimizer corpus roots. No vector-generation command was run manually. The existing global post-commit hook submitted changed repository files to hub-daemon; its backend processing was not audited here. Durable lessons are recorded
 in the project tracker; global personal memory files were not edited.
 
 ### Literal task rollback commands
@@ -678,3 +678,9 @@ rm -- tests/test_core.py
 cp ~/.claude/skill-consolidation/backups/distillers-20261111-2107/tests/test_ollama_layer.py tests/test_ollama_layer.py
 rm -- tests/test_tooling.py
 ```
+
+CI correction: the first remote semantic jobs failed with `fatal: could not read
+Username for https://github.com` because the pinned client repository is private.
+Core checks remain public and mandatory for delivery. Semantic jobs now require
+an explicit repository variable and narrowly scoped read token; no credentials
+were copied or created. The full optional-client suite remains locally verified.

@@ -31,7 +31,7 @@ operation/tool inventory from repository sources; `--check` detects drift.
 `scripts/rotate_workflow_logs.py` archives older workflow-log sections without
 losing entries. The Makefile exposes `check`, `test`, `docs`, and `docs-check`.
 The `.github/workflows/ci.yml` job runs the checks in supported Python/client
-combinations. `tests/` owns isolated behavioral and fake-Ollama coverage.
+core jobs and optional authenticated semantic jobs. `tests/` owns isolated behavioral and fake-Ollama coverage.
 
 See [the generated file map](codebase-overview.md) for the complete path census.
 No standalone `lib/` split is required: the canonical engine module is directly

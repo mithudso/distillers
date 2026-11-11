@@ -20,7 +20,7 @@ to the delivery PR and the completed project tracker, rather than a guessed SHA.
 | Agent guidance | CLAUDE/AGENTS/GEMINI/Copilot share the canonical engine, provenance, frozen-helper and delivery rules. No repo-local agent definitions exist to invent an agent catalog for. |
 | Workflow logs | Versioned `memory.md` and ordered `prompts.md`; safe rotation script and `docs/archive/` reference. |
 | Editor and hygiene | EditorConfig, attributes, ignores, safe env example, VS Code settings/extensions/debug configurations. |
-| GitHub workflow | Python 3.11/3.14 × core/semantic CI, commit-pinned actions, read-only contents permission, Dependabot, CODEOWNERS, PR/issue/security templates. Existing funding YAML scalar quoted without changing its destination. |
+| GitHub workflow | Python 3.11/3.14 core CI plus explicitly configured authenticated semantic CI, commit-pinned actions, read-only contents permission, Dependabot, CODEOWNERS, PR/issue/security templates. Existing funding YAML scalar quoted without changing its destination. |
 | Core documentation | Architecture, development, components, security, testing and MCP applicability. |
 | Installation/reference | Installation, requirements, onboarding, integrations, known limitations, logging, caching and runbooks. |
 | Wiki | `docs/wiki/README.md` links verified commands, scripts, references and maintenance strategy without duplicating their authority. |
@@ -54,8 +54,9 @@ The initial README had an obsolete LAN default; testing docs incorrectly said
 there were no tests and treated old mirror counts as current. Current docs derive
 commands and settings from source. The known Aider sample parses as 128 pages,
 1,007,829 bytes and 250,711 estimated tokens; counts describe that local snapshot.
-Tests isolate optional-client and lexical behavior. The final PR runs the matrix
-on its exact pushed commit before merge.
+Tests isolate optional-client and lexical behavior. The final PR runs core checks on its exact pushed commit before merge. Semantic
+CI needs read access to a private dependency and is explicitly skipped while
+unconfigured; all 56 semantic-enabled tests passed locally.
 
 Stage intended new files before regenerating static metadata; arbitrary untracked
 notes are excluded. The generator never imports the frozen helpers or embeds

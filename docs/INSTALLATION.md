@@ -23,7 +23,8 @@ python3 -m venv .venv
 .venv/bin/python -m pip install .
 ```
 
-For optional embedding support:
+For optional embedding support, Git must already have read access to the private
+`mithudso/ollama-client` repository. The core installation needs no such access:
 
 ```bash
 .venv/bin/python -m pip install '.[semantic]'

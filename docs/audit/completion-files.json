@@ -60,12 +60,12 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "lines": 35,
+      "lines": 70,
       "status": "added"
     },
     {
       "path": ".gitignore",
-      "lines": 30,
+      "lines": 33,
       "status": "updated"
     },
     {
@@ -115,7 +115,7 @@
     },
     {
       "path": "README.md",
-      "lines": 98,
+      "lines": 102,
       "status": "updated"
     },
     {
@@ -135,12 +135,12 @@
     },
     {
       "path": "docs/DEVELOPMENT.md",
-      "lines": 90,
+      "lines": 92,
       "status": "updated"
     },
     {
       "path": "docs/INSTALLATION.md",
-      "lines": 52,
+      "lines": 53,
       "status": "added"
     },
     {
@@ -155,7 +155,7 @@
     },
     {
       "path": "docs/TESTING.md",
-      "lines": 73,
+      "lines": 85,
       "status": "updated"
     },
     {
@@ -180,7 +180,7 @@
     },
     {
       "path": "docs/code-deep-optimizer-2026-11-11.md",
-      "lines": 680,
+      "lines": 686,
       "status": "added"
     },
     {
@@ -230,7 +230,7 @@
     },
     {
       "path": "docs/repo-bootstrap-audit-2026-11-11.md",
-      "lines": 63,
+      "lines": 64,
       "status": "added"
     },
     {
@@ -285,7 +285,7 @@
     },
     {
       "path": "memory.md",
-      "lines": 19,
+      "lines": 21,
       "status": "added"
     },
     {

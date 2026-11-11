@@ -41,7 +41,9 @@ index census and never includes arbitrary untracked notes.
 `make check`, `make test`, `make docs`, and `make docs-check` provide these
 workflows through the repository Makefile. See [testing](TESTING.md) for the
 known-docset smoke command and coverage policy. CI runs syntax, behavior tests,
-and metadata checks on Python 3.11 and 3.14, with and without the optional client.
+and metadata checks on Python 3.11 and 3.14. Optional authenticated client CI
+requires the explicit repository setting and read-only secret described in
+[testing](TESTING.md#authenticated-optional-ci); it is skipped when unconfigured.
 
 ## Configuration
 
